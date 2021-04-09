@@ -71,6 +71,7 @@ import io.trino.sql.planner.plan.TopNNode;
 import io.trino.sql.planner.plan.TopNRankingNode;
 import io.trino.sql.planner.plan.UnionNode;
 import io.trino.sql.planner.plan.UnnestNode;
+import io.trino.sql.planner.plan.UpdateNode;
 import io.trino.sql.planner.plan.ValuesNode;
 import io.trino.sql.planner.plan.WindowNode;
 import io.trino.sql.tree.Expression;
@@ -285,7 +286,7 @@ public class UnaliasSymbolReferences
             });
 
             return new PlanAndMappings(
-                    new TableScanNode(node.getId(), node.getTable(), newOutputs, newAssignments, node.getEnforcedConstraint(), node.isForDelete()),
+                    new TableScanNode(node.getId(), node.getTable(), newOutputs, newAssignments, node.getEnforcedConstraint(), node.isUpdateTarget(), node.getUseConnectorNodePartitioning()),
                     mapping);
         }
 
@@ -553,6 +554,28 @@ public class UnaliasSymbolReferences
                             rewrittenSource.getRoot(),
                             node.getTarget(),
                             newRowId,
+                            newOutputs),
+                    mapping);
+        }
+
+        @Override
+        public PlanAndMappings visitUpdate(UpdateNode node, UnaliasContext context)
+        {
+            PlanAndMappings rewrittenSource = node.getSource().accept(this, context);
+            Map<Symbol, Symbol> mapping = new HashMap<>(rewrittenSource.getMappings());
+            SymbolMapper mapper = symbolMapper(mapping);
+
+            Symbol newRowId = mapper.map(node.getRowId());
+            List<Symbol> newColumnValueSymbols = mapper.map(node.getColumnValueAndRowIdSymbols());
+            List<Symbol> newOutputs = mapper.map(node.getOutputSymbols());
+
+            return new PlanAndMappings(
+                    new UpdateNode(
+                            node.getId(),
+                            rewrittenSource.getRoot(),
+                            node.getTarget(),
+                            newRowId,
+                            newColumnValueSymbols,
                             newOutputs),
                     mapping);
         }
@@ -968,6 +991,7 @@ public class UnaliasSymbolReferences
                             newCriteria,
                             newLeftOutputSymbols,
                             newRightOutputSymbols,
+                            node.isMaySkipOutputDuplicates(),
                             newFilter,
                             newLeftHashSymbol,
                             newRightHashSymbol,

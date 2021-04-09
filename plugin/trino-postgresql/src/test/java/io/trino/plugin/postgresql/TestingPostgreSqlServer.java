@@ -42,20 +42,23 @@ public class TestingPostgreSqlServer
                 .withUsername(USER)
                 .withPassword(PASSWORD);
         dockerContainer.start();
+
+        execute("CREATE SCHEMA tpch");
     }
 
     public void execute(String sql)
-            throws SQLException
     {
         execute(getJdbcUrl(), getProperties(), sql);
     }
 
     private static void execute(String url, Properties properties, String sql)
-            throws SQLException
     {
         try (Connection connection = DriverManager.getConnection(url, properties);
                 Statement statement = connection.createStatement()) {
             statement.execute(sql);
+        }
+        catch (SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -74,6 +77,7 @@ public class TestingPostgreSqlServer
         Properties properties = new Properties();
         properties.setProperty("user", USER);
         properties.setProperty("password", PASSWORD);
+        properties.setProperty("currentSchema", "tpch,public");
         return properties;
     }
 

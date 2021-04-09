@@ -66,6 +66,7 @@ import io.trino.sql.tree.ExplainType;
 import io.trino.sql.tree.Expression;
 import io.trino.sql.tree.FetchFirst;
 import io.trino.sql.tree.Format;
+import io.trino.sql.tree.FrameBound;
 import io.trino.sql.tree.FunctionCall;
 import io.trino.sql.tree.FunctionCall.NullTreatment;
 import io.trino.sql.tree.GenericLiteral;
@@ -94,6 +95,10 @@ import io.trino.sql.tree.LikeClause;
 import io.trino.sql.tree.Limit;
 import io.trino.sql.tree.LogicalBinaryExpression;
 import io.trino.sql.tree.LongLiteral;
+import io.trino.sql.tree.Merge;
+import io.trino.sql.tree.MergeDelete;
+import io.trino.sql.tree.MergeInsert;
+import io.trino.sql.tree.MergeUpdate;
 import io.trino.sql.tree.NaturalJoin;
 import io.trino.sql.tree.Node;
 import io.trino.sql.tree.NodeLocation;
@@ -123,6 +128,7 @@ import io.trino.sql.tree.RevokeRoles;
 import io.trino.sql.tree.Rollback;
 import io.trino.sql.tree.Rollup;
 import io.trino.sql.tree.Row;
+import io.trino.sql.tree.SearchedCaseExpression;
 import io.trino.sql.tree.Select;
 import io.trino.sql.tree.SelectItem;
 import io.trino.sql.tree.SetPath;
@@ -156,9 +162,14 @@ import io.trino.sql.tree.TimestampLiteral;
 import io.trino.sql.tree.TransactionAccessMode;
 import io.trino.sql.tree.Union;
 import io.trino.sql.tree.Unnest;
+import io.trino.sql.tree.Update;
+import io.trino.sql.tree.UpdateAssignment;
 import io.trino.sql.tree.Values;
 import io.trino.sql.tree.WhenClause;
-import io.trino.sql.tree.Window;
+import io.trino.sql.tree.WindowDefinition;
+import io.trino.sql.tree.WindowFrame;
+import io.trino.sql.tree.WindowReference;
+import io.trino.sql.tree.WindowSpecification;
 import io.trino.sql.tree.With;
 import io.trino.sql.tree.WithQuery;
 import org.testng.annotations.Test;
@@ -168,8 +179,11 @@ import java.util.List;
 import java.util.Optional;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.sql.QueryUtil.aliased;
 import static io.trino.sql.QueryUtil.ascending;
+import static io.trino.sql.QueryUtil.equal;
 import static io.trino.sql.QueryUtil.identifier;
+import static io.trino.sql.QueryUtil.nameReference;
 import static io.trino.sql.QueryUtil.ordering;
 import static io.trino.sql.QueryUtil.query;
 import static io.trino.sql.QueryUtil.quotedIdentifier;
@@ -195,12 +209,16 @@ import static io.trino.sql.testing.TreeAssertions.assertFormattedSql;
 import static io.trino.sql.tree.ArithmeticUnaryExpression.negative;
 import static io.trino.sql.tree.ArithmeticUnaryExpression.positive;
 import static io.trino.sql.tree.DateTimeDataType.Type.TIMESTAMP;
+import static io.trino.sql.tree.FrameBound.Type.CURRENT_ROW;
 import static io.trino.sql.tree.SortItem.NullOrdering.UNDEFINED;
 import static io.trino.sql.tree.SortItem.Ordering.ASCENDING;
 import static io.trino.sql.tree.SortItem.Ordering.DESCENDING;
+import static io.trino.sql.tree.WindowFrame.Type.ROWS;
 import static java.lang.String.format;
 import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
@@ -343,13 +361,15 @@ public class TestSqlParser
         assertExpression("ARRAY [1, 2][1]", new SubscriptExpression(
                 new ArrayConstructor(ImmutableList.of(new LongLiteral("1"), new LongLiteral("2"))),
                 new LongLiteral("1")));
-        try {
-            assertExpression("CASE WHEN TRUE THEN ARRAY[1,2] END[1]", null);
-            fail();
-        }
-        catch (RuntimeException e) {
-            // Expected
-        }
+
+        assertExpression("CASE WHEN TRUE THEN ARRAY[1,2] END[1]", new SubscriptExpression(
+                new SearchedCaseExpression(
+                        ImmutableList.of(
+                                new WhenClause(
+                                        new BooleanLiteral("true"),
+                                        new ArrayConstructor(ImmutableList.of(new LongLiteral("1"), new LongLiteral("2"))))),
+                        Optional.empty()),
+                new LongLiteral("1")));
     }
 
     @Test
@@ -536,6 +556,7 @@ public class TestSqlParser
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
+                ImmutableList.of(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
@@ -740,6 +761,22 @@ public class TestSqlParser
                                         new BooleanLiteral("true"),
                                         new LongLiteral("2"))),
                         Optional.of(new LongLiteral("3"))));
+    }
+
+    @Test
+    public void testSearchedCase()
+    {
+        assertExpression(
+                "CASE WHEN a > 3 THEN 23 WHEN b = a THEN 33 END",
+                new SearchedCaseExpression(
+                        ImmutableList.of(
+                                new WhenClause(
+                                        new ComparisonExpression(ComparisonExpression.Operator.GREATER_THAN, new Identifier("a"), new LongLiteral("3")),
+                                        new LongLiteral("23")),
+                                new WhenClause(
+                                        new ComparisonExpression(ComparisonExpression.Operator.EQUAL, new Identifier("b"), new Identifier("a")),
+                                        new LongLiteral("33"))),
+                        Optional.empty()));
     }
 
     @Test
@@ -1525,6 +1562,43 @@ public class TestSqlParser
     }
 
     @Test
+    public void testMerge()
+    {
+        assertStatement("" +
+                        "MERGE INTO inventory AS i " +
+                        "  USING changes AS c " +
+                        "  ON i.part = c.part " +
+                        "WHEN MATCHED AND c.action = 'mod' " +
+                        "  THEN UPDATE SET " +
+                        "    qty = qty + c.qty " +
+                        "  , ts = CURRENT_TIMESTAMP " +
+                        "WHEN MATCHED AND c.action = 'del' " +
+                        "  THEN DELETE " +
+                        "WHEN NOT MATCHED AND c.action = 'new' " +
+                        "  THEN INSERT (part, qty) VALUES (c.part, c.qty)",
+                new Merge(
+                        table(QualifiedName.of("inventory")),
+                        Optional.of(new Identifier("i")),
+                        aliased(table(QualifiedName.of("changes")), "c"),
+                        equal(nameReference("i", "part"), nameReference("c", "part")),
+                        ImmutableList.of(
+                                new MergeUpdate(
+                                        Optional.of(equal(nameReference("c", "action"), new StringLiteral("mod"))),
+                                        ImmutableList.of(
+                                                new MergeUpdate.Assignment(new Identifier("qty"), new ArithmeticBinaryExpression(
+                                                        ArithmeticBinaryExpression.Operator.ADD,
+                                                        nameReference("qty"),
+                                                        nameReference("c", "qty"))),
+                                                new MergeUpdate.Assignment(new Identifier("ts"), new CurrentTime(CurrentTime.Function.TIMESTAMP)))),
+                                new MergeDelete(
+                                        Optional.of(equal(nameReference("c", "action"), new StringLiteral("del")))),
+                                new MergeInsert(
+                                        Optional.of(equal(nameReference("c", "action"), new StringLiteral("new"))),
+                                        ImmutableList.of(new Identifier("part"), new Identifier("qty")),
+                                        ImmutableList.of(nameReference("c", "part"), nameReference("c", "qty"))))));
+    }
+
+    @Test
     public void testRenameTable()
     {
         assertStatement("ALTER TABLE a RENAME TO b", new RenameTable(QualifiedName.of("a"), QualifiedName.of("b"), false));
@@ -1810,23 +1884,15 @@ public class TestSqlParser
                         new PathElement(Optional.of(new Identifier("schemas,with")), new Identifier("grammar.in")),
                         new PathElement(Optional.empty(), new Identifier("their!names"))))));
 
-        try {
-            assertStatement("SET PATH one.too.many, qualifiers",
-                    new SetPath(new PathSpecification(Optional.empty(), ImmutableList.of(
-                            new PathElement(Optional.empty(), new Identifier("dummyValue"))))));
-            fail();
-        }
-        catch (RuntimeException e) {
-            //expected - schema can only be qualified by catalog
-        }
+        assertThatThrownBy(() -> assertStatement("SET PATH one.too.many, qualifiers",
+                new SetPath(new PathSpecification(Optional.empty(), ImmutableList.of(
+                        new PathElement(Optional.empty(), new Identifier("dummyValue")))))))
+                .isInstanceOf(ParsingException.class)
+                .hasMessage("line 1:17: mismatched input '.'. Expecting: ',', <EOF>");
 
-        try {
-            SQL_PARSER.createStatement("SET PATH ", new ParsingOptions());
-            fail();
-        }
-        catch (RuntimeException e) {
-            //expected - some form of parameter is required
-        }
+        assertThatThrownBy(() -> SQL_PARSER.createStatement("SET PATH ", new ParsingOptions()))
+                .isInstanceOf(ParsingException.class)
+                .hasMessage("line 1:10: mismatched input '<EOF>'. Expecting: <identifier>");
     }
 
     @Test
@@ -2707,7 +2773,7 @@ public class TestSqlParser
                 new FunctionCall(
                         Optional.empty(),
                         QualifiedName.of("lead"),
-                        Optional.of(new Window(ImmutableList.of(), Optional.empty(), Optional.empty())),
+                        Optional.of(new WindowSpecification(Optional.empty(), ImmutableList.of(), Optional.empty(), Optional.empty())),
                         Optional.empty(),
                         Optional.empty(),
                         false,
@@ -2717,12 +2783,117 @@ public class TestSqlParser
                 new FunctionCall(
                         Optional.empty(),
                         QualifiedName.of("lead"),
-                        Optional.of(new Window(ImmutableList.of(), Optional.empty(), Optional.empty())),
+                        Optional.of(new WindowSpecification(Optional.empty(), ImmutableList.of(), Optional.empty(), Optional.empty())),
                         Optional.empty(),
                         Optional.empty(),
                         false,
                         Optional.of(NullTreatment.RESPECT),
                         ImmutableList.of(new Identifier("x"), new LongLiteral("1"))));
+    }
+
+    @Test
+    public void testWindowSpecification()
+    {
+        assertExpression("rank() OVER someWindow",
+                new FunctionCall(
+                        Optional.empty(),
+                        QualifiedName.of("rank"),
+                        Optional.of(new WindowReference(new Identifier("someWindow"))),
+                        Optional.empty(),
+                        Optional.empty(),
+                        false,
+                        Optional.empty(),
+                        ImmutableList.of()));
+
+        assertExpression("rank() OVER (someWindow PARTITION BY x ORDER BY y ROWS CURRENT ROW)",
+                new FunctionCall(
+                        Optional.empty(),
+                        QualifiedName.of("rank"),
+                        Optional.of(new WindowSpecification(
+                                Optional.of(new Identifier("someWindow")),
+                                ImmutableList.of(new Identifier("x")),
+                                Optional.of(new OrderBy(ImmutableList.of(new SortItem(new Identifier("y"), ASCENDING, UNDEFINED)))),
+                                Optional.of(new WindowFrame(ROWS, new FrameBound(CURRENT_ROW), Optional.empty())))),
+                        Optional.empty(),
+                        Optional.empty(),
+                        false,
+                        Optional.empty(),
+                        ImmutableList.of()));
+
+        assertExpression("rank() OVER (PARTITION BY x ORDER BY y ROWS CURRENT ROW)",
+                new FunctionCall(
+                        Optional.empty(),
+                        QualifiedName.of("rank"),
+                        Optional.of(new WindowSpecification(
+                                Optional.empty(),
+                                ImmutableList.of(new Identifier("x")),
+                                Optional.of(new OrderBy(ImmutableList.of(new SortItem(new Identifier("y"), ASCENDING, UNDEFINED)))),
+                                Optional.of(new WindowFrame(ROWS, new FrameBound(CURRENT_ROW), Optional.empty())))),
+                        Optional.empty(),
+                        Optional.empty(),
+                        false,
+                        Optional.empty(),
+                        ImmutableList.of()));
+    }
+
+    @Test
+    public void testWindowClause()
+    {
+        assertStatement("SELECT * FROM T WINDOW someWindow AS (PARTITION BY a), otherWindow AS (someWindow ORDER BY b)",
+                simpleQuery(
+                        selectList(new AllColumns()),
+                        new Table(makeQualifiedName("T")),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        ImmutableList.of(
+                                new WindowDefinition(
+                                        new Identifier("someWindow"),
+                                        new WindowSpecification(
+                                                Optional.empty(),
+                                                ImmutableList.of(new Identifier("a")),
+                                                Optional.empty(),
+                                                Optional.empty())),
+                                new WindowDefinition(
+                                        new Identifier("otherWindow"),
+                                        new WindowSpecification(
+                                                Optional.of(new Identifier("someWindow")),
+                                                ImmutableList.of(),
+                                                Optional.of(new OrderBy(ImmutableList.of(new SortItem(new Identifier("b"), ASCENDING, UNDEFINED)))),
+                                                Optional.empty()))),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty()));
+    }
+
+    public void testUpdate()
+    {
+        assertStatement("" +
+                        "UPDATE foo_table\n" +
+                        "    SET bar = 23, baz = 3.1415E0, bletch = 'barf'\n" +
+                        "WHERE (nothing = 'fun')",
+                new Update(
+                        new NodeLocation(1, 1),
+                        table(QualifiedName.of("foo_table")),
+                        ImmutableList.of(
+                                new UpdateAssignment(new Identifier("bar"), new LongLiteral("23")),
+                                new UpdateAssignment(new Identifier("baz"), new DoubleLiteral("3.1415")),
+                                new UpdateAssignment(new Identifier("bletch"), new StringLiteral("barf"))),
+                        Optional.of(new ComparisonExpression(ComparisonExpression.Operator.EQUAL, new Identifier("nothing"), new StringLiteral("fun")))));
+    }
+
+    @Test
+    public void testWherelessUpdate()
+    {
+        assertStatement("" +
+                        "UPDATE foo_table\n" +
+                        "    SET bar = 23",
+                new Update(
+                        new NodeLocation(1, 1),
+                        table(QualifiedName.of("foo_table")),
+                        ImmutableList.of(
+                                new UpdateAssignment(new Identifier("bar"), new LongLiteral("23"))),
+                        Optional.empty()));
     }
 
     private static QualifiedName makeQualifiedName(String tableName)
@@ -2733,27 +2904,34 @@ public class TestSqlParser
         return QualifiedName.of(parts);
     }
 
+    /**
+     * @deprecated use {@link ParserAssert#statement(String)} instead
+     */
+    @Deprecated
     private static void assertStatement(String query, Statement expected)
     {
         assertParsed(query, expected, SQL_PARSER.createStatement(query, new ParsingOptions()));
         assertFormattedSql(SQL_PARSER, expected);
     }
 
+    /**
+     * @deprecated use {@link ParserAssert#statement(String)} instead
+     */
+    @Deprecated
     private static void assertInvalidStatement(String statement, String expectedErrorMessageRegex)
     {
-        try {
-            Statement result = SQL_PARSER.createStatement(statement, new ParsingOptions());
-            fail("Expected to throw ParsingException for input:[" + statement + "], but got: " + result);
-        }
-        catch (ParsingException e) {
-            if (!e.getErrorMessage().matches(expectedErrorMessageRegex)) {
-                fail(format("Expected error message to match '%s', but was: '%s'", expectedErrorMessageRegex, e.getErrorMessage()));
-            }
-        }
+        assertThatThrownBy(() -> SQL_PARSER.createStatement(statement, new ParsingOptions()))
+                .isInstanceOfSatisfying(ParsingException.class, e -> assertTrue(e.getErrorMessage().matches(expectedErrorMessageRegex)));
     }
 
+    /**
+     * @deprecated use {@link ParserAssert#expression(String)} instead
+     */
+    @Deprecated
     private static void assertExpression(String expression, Expression expected)
     {
+        requireNonNull(expression, "expression is null");
+        requireNonNull(expected, "expected is null");
         assertParsed(expression, expected, SQL_PARSER.createExpression(expression, new ParsingOptions(AS_DECIMAL)));
     }
 
@@ -2769,15 +2947,8 @@ public class TestSqlParser
 
     private static void assertInvalidExpression(String expression, String expectedErrorMessageRegex)
     {
-        try {
-            Expression result = createExpression(expression);
-            fail("Expected to throw ParsingException for input:[" + expression + "], but got: " + result);
-        }
-        catch (ParsingException e) {
-            if (!e.getErrorMessage().matches(expectedErrorMessageRegex)) {
-                fail(format("Expected error message to match '%s', but was: '%s'", expectedErrorMessageRegex, e.getErrorMessage()));
-            }
-        }
+        assertThatThrownBy(() -> createExpression(expression))
+                .isInstanceOfSatisfying(ParsingException.class, e -> assertTrue(e.getErrorMessage().matches(expectedErrorMessageRegex)));
     }
 
     private static String indent(String value)

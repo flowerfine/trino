@@ -139,7 +139,7 @@ public class TestQueryResultRows
                 .row(2, 12L)
                 .row(3, 13L)
                 .row(4, 14L)
-                    .pageBreak()
+                .pageBreak()
                 .row(100, 110L)
                 .row(101, 111L)
                 .row(102, 112L)
@@ -472,7 +472,7 @@ public class TestQueryResultRows
     private static final class TestExceptionConsumer
             implements Consumer<Throwable>
     {
-        private List<Throwable> exceptions = new ArrayList<>();
+        private final List<Throwable> exceptions = new ArrayList<>();
 
         @Override
         public void accept(Throwable throwable)

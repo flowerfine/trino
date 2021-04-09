@@ -141,6 +141,11 @@ statement
     | DESCRIBE INPUT identifier                                        #describeInput
     | DESCRIBE OUTPUT identifier                                       #describeOutput
     | SET PATH pathSpecification                                       #setPath
+    | UPDATE qualifiedName
+        SET updateAssignment (',' updateAssignment)*
+        (WHERE where=booleanExpression)?                               #update
+    | MERGE INTO qualifiedName (AS? identifier)?
+        USING relation ON expression mergeCase+                        #merge
     ;
 
 query
@@ -212,6 +217,7 @@ querySpecification
       (WHERE where=booleanExpression)?
       (GROUP BY groupBy)?
       (HAVING having=booleanExpression)?
+      (WINDOW windowDefinition (',' windowDefinition)*)?
     ;
 
 groupBy
@@ -228,6 +234,17 @@ groupingElement
 groupingSet
     : '(' (expression (',' expression)*)? ')'
     | expression
+    ;
+
+windowDefinition
+    : name=identifier AS '(' windowSpecification ')'
+    ;
+
+windowSpecification
+    : (existingWindowName=identifier)?
+      (PARTITION BY partition+=expression (',' partition+=expression)*)?
+      (ORDER BY sortItem (',' sortItem)*)?
+      windowFrame?
     ;
 
 namedQuery
@@ -437,12 +454,18 @@ filter
     : FILTER '(' WHERE booleanExpression ')'
     ;
 
+mergeCase
+    : WHEN MATCHED (AND condition=expression)? THEN
+        UPDATE SET targets+=identifier EQ values+=expression
+          (',' targets+=identifier EQ values+=expression)*                  #mergeUpdate
+    | WHEN MATCHED (AND condition=expression)? THEN DELETE                  #mergeDelete
+    | WHEN NOT MATCHED (AND condition=expression)? THEN
+        INSERT ('(' targets+=identifier (',' targets+=identifier)* ')')?
+        VALUES '(' values+=expression (',' values+=expression)* ')'         #mergeInsert
+    ;
+
 over
-    : OVER '('
-        (PARTITION BY partition+=expression (',' partition+=expression)*)?
-        (ORDER BY sortItem (',' sortItem)*)?
-        windowFrame?
-      ')'
+    : OVER (windowName=identifier | '(' windowSpecification ')')
     ;
 
 windowFrame
@@ -461,6 +484,9 @@ frameBound
     | expression boundType=(PRECEDING | FOLLOWING)  #boundedFrame
     ;
 
+updateAssignment
+    : identifier EQ expression
+    ;
 
 explainOption
     : FORMAT value=(TEXT | GRAPHVIZ | JSON)                 #explainFormat
@@ -544,7 +570,7 @@ nonReserved
     | IF | IGNORE | INCLUDING | INPUT | INTERVAL | INVOKER | IO | ISOLATION
     | JSON
     | LAST | LATERAL | LEVEL | LIMIT | LOGICAL
-    | MAP | MATERIALIZED | MINUTE | MONTH
+    | MAP | MATCHED | MATERIALIZED | MERGE | MINUTE | MONTH
     | NEXT | NFC | NFD | NFKC | NFKD | NO | NONE | NULLIF | NULLS
     | OFFSET | ONLY | OPTION | ORDINALITY | OUTPUT | OVER
     | PARTITION | PARTITIONS | PATH | POSITION | PRECEDING | PRECISION | PRIVILEGES | PROPERTIES
@@ -552,9 +578,9 @@ nonReserved
     | SCHEMA | SCHEMAS | SECOND | SECURITY | SERIALIZABLE | SESSION | SET | SETS
     | SHOW | SOME | START | STATS | SUBSTRING | SYSTEM
     | TABLES | TABLESAMPLE | TEXT | TIES | TIME | TIMESTAMP | TO | TRANSACTION | TRY_CAST | TYPE
-    | UNBOUNDED | UNCOMMITTED | USE | USER
+    | UNBOUNDED | UNCOMMITTED | UPDATE | USE | USER
     | VALIDATE | VERBOSE | VIEW
-    | WITHOUT | WORK | WRITE
+    | WINDOW | WITHOUT | WORK | WRITE
     | YEAR
     | ZONE
     ;
@@ -661,7 +687,9 @@ LOCALTIME: 'LOCALTIME';
 LOCALTIMESTAMP: 'LOCALTIMESTAMP';
 LOGICAL: 'LOGICAL';
 MAP: 'MAP';
+MATCHED: 'MATCHED';
 MATERIALIZED: 'MATERIALIZED';
+MERGE: 'MERGE';
 MINUTE: 'MINUTE';
 MONTH: 'MONTH';
 NATURAL: 'NATURAL';
@@ -747,6 +775,7 @@ UNBOUNDED: 'UNBOUNDED';
 UNCOMMITTED: 'UNCOMMITTED';
 UNION: 'UNION';
 UNNEST: 'UNNEST';
+UPDATE: 'UPDATE';
 USE: 'USE';
 USER: 'USER';
 USING: 'USING';
@@ -756,6 +785,7 @@ VERBOSE: 'VERBOSE';
 VIEW: 'VIEW';
 WHEN: 'WHEN';
 WHERE: 'WHERE';
+WINDOW: 'WINDOW';
 WITH: 'WITH';
 WITHOUT: 'WITHOUT';
 WORK: 'WORK';
@@ -849,7 +879,6 @@ WS
 PARAMETER
     : '?'
     ;
-
 
 // Catch-all for anything we can't recognize.
 // We use this to be able to ignore and recover all the text

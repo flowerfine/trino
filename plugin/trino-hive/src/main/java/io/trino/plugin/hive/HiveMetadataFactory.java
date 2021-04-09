@@ -56,6 +56,8 @@ public class HiveMetadataFactory
     private final BoundedExecutor dropExecutor;
     private final Executor updateExecutor;
     private final String trinoVersion;
+    private final HiveRedirectionsProvider hiveRedirectionsProvider;
+    private final HiveMaterializedViewMetadata hiveMaterializedViewMetadata;
     private final AccessControlMetadataFactory accessControlMetadataFactory;
     private final Optional<Duration> hiveTransactionHeartbeatInterval;
     private final ScheduledExecutorService heartbeatService;
@@ -75,6 +77,8 @@ public class HiveMetadataFactory
             LocationService locationService,
             JsonCodec<PartitionUpdate> partitionUpdateCodec,
             NodeVersion nodeVersion,
+            HiveRedirectionsProvider hiveRedirectionsProvider,
+            HiveMaterializedViewMetadata hiveMaterializedViewMetadata,
             AccessControlMetadataFactory accessControlMetadataFactory)
     {
         this(
@@ -99,6 +103,8 @@ public class HiveMetadataFactory
                 executorService,
                 heartbeatService,
                 nodeVersion.toString(),
+                hiveRedirectionsProvider,
+                hiveMaterializedViewMetadata,
                 accessControlMetadataFactory);
     }
 
@@ -124,6 +130,8 @@ public class HiveMetadataFactory
             ExecutorService executorService,
             ScheduledExecutorService heartbeatService,
             String trinoVersion,
+            HiveRedirectionsProvider hiveRedirectionsProvider,
+            HiveMaterializedViewMetadata hiveMaterializedViewMetadata,
             AccessControlMetadataFactory accessControlMetadataFactory)
     {
         this.catalogName = requireNonNull(catalogName, "catalogName is null");
@@ -142,6 +150,8 @@ public class HiveMetadataFactory
         this.locationService = requireNonNull(locationService, "locationService is null");
         this.partitionUpdateCodec = requireNonNull(partitionUpdateCodec, "partitionUpdateCodec is null");
         this.trinoVersion = requireNonNull(trinoVersion, "trinoVersion is null");
+        this.hiveRedirectionsProvider = requireNonNull(hiveRedirectionsProvider, "hiveRedirectionsProvider is null");
+        this.hiveMaterializedViewMetadata = requireNonNull(hiveMaterializedViewMetadata, "hiveMaterializedViewMetadata is null");
         this.accessControlMetadataFactory = requireNonNull(accessControlMetadataFactory, "accessControlMetadataFactory is null");
         this.hiveTransactionHeartbeatInterval = requireNonNull(hiveTransactionHeartbeatInterval, "hiveTransactionHeartbeatInterval is null");
 
@@ -185,6 +195,8 @@ public class HiveMetadataFactory
                 partitionUpdateCodec,
                 trinoVersion,
                 new MetastoreHiveStatisticsProvider(metastore),
+                hiveRedirectionsProvider,
+                hiveMaterializedViewMetadata,
                 accessControlMetadataFactory.create(metastore));
     }
 }

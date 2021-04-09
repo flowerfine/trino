@@ -615,6 +615,19 @@ public class AccessControlManager
     }
 
     @Override
+    public void checkCanUpdateTableColumns(SecurityContext securityContext, QualifiedObjectName tableName, Set<String> updatedColumnNames)
+    {
+        requireNonNull(securityContext, "securityContext is null");
+        requireNonNull(tableName, "tableName is null");
+
+        checkCanAccessCatalog(securityContext, tableName.getCatalogName());
+
+        systemAuthorizationCheck(control -> control.checkCanUpdateTableColumns(securityContext.toSystemSecurityContext(), tableName.asCatalogSchemaTableName(), updatedColumnNames));
+
+        catalogAuthorizationCheck(tableName.getCatalogName(), securityContext, (control, context) -> control.checkCanUpdateTableColumns(context, tableName.asSchemaTableName(), updatedColumnNames));
+    }
+
+    @Override
     public void checkCanCreateView(SecurityContext securityContext, QualifiedObjectName viewName)
     {
         requireNonNull(securityContext, "securityContext is null");
@@ -645,7 +658,7 @@ public class AccessControlManager
     public void checkCanSetViewAuthorization(SecurityContext securityContext, QualifiedObjectName viewName, TrinoPrincipal principal)
     {
         requireNonNull(securityContext, "securityContext is null");
-        requireNonNull(viewName, "tableName is null");
+        requireNonNull(viewName, "viewName is null");
         requireNonNull(principal, "principal is null");
 
         checkCanAccessCatalog(securityContext, viewName.getCatalogName());
@@ -854,7 +867,7 @@ public class AccessControlManager
     {
         requireNonNull(securityContext, "securityContext is null");
         requireNonNull(role, "role is null");
-        requireNonNull(catalogName, "catalog is null");
+        requireNonNull(catalogName, "catalogName is null");
 
         checkCanAccessCatalog(securityContext, catalogName);
 
@@ -933,8 +946,8 @@ public class AccessControlManager
     @Override
     public List<ViewExpression> getRowFilters(SecurityContext context, QualifiedObjectName tableName)
     {
-        requireNonNull(context, "securityContext is null");
-        requireNonNull(tableName, "catalogName is null");
+        requireNonNull(context, "context is null");
+        requireNonNull(tableName, "tableName is null");
 
         ImmutableList.Builder<ViewExpression> filters = ImmutableList.builder();
         CatalogAccessControlEntry entry = getConnectorAccessControl(context.getTransactionId(), tableName.getCatalogName());
@@ -955,8 +968,8 @@ public class AccessControlManager
     @Override
     public List<ViewExpression> getColumnMasks(SecurityContext context, QualifiedObjectName tableName, String columnName, Type type)
     {
-        requireNonNull(context, "securityContext is null");
-        requireNonNull(tableName, "catalogName is null");
+        requireNonNull(context, "context is null");
+        requireNonNull(tableName, "tableName is null");
 
         ImmutableList.Builder<ViewExpression> masks = ImmutableList.builder();
 

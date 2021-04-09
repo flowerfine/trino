@@ -114,9 +114,9 @@ public class PinotClient
             JsonCodec<TimeBoundary> timeBoundaryJsonCodec,
             JsonCodec<BrokerResponseNative> brokerResponseCodec)
     {
-        this.brokersForTableJsonCodec = requireNonNull(brokersForTableJsonCodec, "brokers for table json codec is null");
-        this.timeBoundaryJsonCodec = requireNonNull(timeBoundaryJsonCodec, "time boundary json codec is null");
-        this.tablesJsonCodec = requireNonNull(tablesJsonCodec, "json codec is null");
+        this.brokersForTableJsonCodec = requireNonNull(brokersForTableJsonCodec, "brokersForTableJsonCodec is null");
+        this.timeBoundaryJsonCodec = requireNonNull(timeBoundaryJsonCodec, "timeBoundaryJsonCodec is null");
+        this.tablesJsonCodec = requireNonNull(tablesJsonCodec, "tablesJsonCodec is null");
         this.schemaJsonCodec = new JsonCodecFactory(() -> new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)).jsonCodec(Schema.class);
         this.brokerResponseCodec = requireNonNull(brokerResponseCodec, "brokerResponseCodec is null");
@@ -174,7 +174,7 @@ public class PinotClient
     private <T> T sendHttpGetToControllerJson(String path, JsonCodec<T> codec)
     {
         return doHttpActionWithHeadersJson(
-                Request.builder().prepareGet().setUri(URI.create(format("http://%s/%s", getControllerUrl(), path))),
+                Request.Builder.prepareGet().setUri(URI.create(format("http://%s/%s", getControllerUrl(), path))),
                 Optional.empty(),
                 codec);
     }
@@ -182,7 +182,7 @@ public class PinotClient
     private <T> T sendHttpGetToBrokerJson(String table, String path, JsonCodec<T> codec)
     {
         return doHttpActionWithHeadersJson(
-                Request.builder().prepareGet().setUri(URI.create(format("http://%s/%s", getBrokerHost(table), path))),
+                Request.Builder.prepareGet().setUri(URI.create(format("http://%s/%s", getBrokerHost(table), path))),
                 Optional.empty(),
                 codec);
     }
@@ -431,8 +431,7 @@ public class PinotClient
         return doWithRetries(PinotSessionProperties.getPinotRetryCount(session), retryNumber -> {
             String queryHost = getBrokerHost(query.getTable());
             LOG.info("Query '%s' on broker host '%s'", queryHost, query.getQuery());
-            Request.Builder builder = Request.builder()
-                    .preparePost()
+            Request.Builder builder = Request.Builder.preparePost()
                     .setUri(URI.create(format(QUERY_URL_TEMPLATE, queryHost)));
             BrokerResponseNative response = doHttpActionWithHeadersJson(builder, Optional.of(format(REQUEST_PAYLOAD_TEMPLATE, query.getQuery())), brokerResponseCodec);
 
@@ -488,7 +487,7 @@ public class PinotClient
     public static <T> T doWithRetries(int retries, Function<Integer, T> caller)
     {
         PinotException firstError = null;
-        checkState(retries > 0, "Invalid num of retries %d", retries);
+        checkState(retries > 0, "Invalid num of retries %s", retries);
         for (int i = 0; i < retries; ++i) {
             try {
                 return caller.apply(i);

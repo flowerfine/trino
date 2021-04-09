@@ -47,6 +47,7 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
 public abstract class BaseElasticsearchSmokeTest
+        // TODO extend BaseConnectorTest
         extends AbstractTestIntegrationSmokeTest
 {
     private final String image;
@@ -280,6 +281,47 @@ public abstract class BaseElasticsearchSmokeTest
         assertQuery(
                 "SELECT a.b.y[1], c.f[1].g[2], c.f[2].g[1], j[2], k[1] FROM test_arrays",
                 "VALUES ('hello', 20, 30, 60, NULL)");
+    }
+
+    @Test
+    public void testMixedArray()
+            throws IOException
+    {
+        String indexName = "test_mixed_arrays";
+
+        @Language("JSON")
+        String mapping = "" +
+                "{" +
+                "      \"_meta\": {" +
+                "        \"presto\": {" +
+                "          \"a\": {" +
+                "                \"isArray\": true" +
+                "          }" +
+                "        }" +
+                "      }," +
+                "      \"properties\": {" +
+                "        \"a\": {" +
+                "          \"type\": \"keyword\"" +
+                "        }" +
+                "      }" +
+                "}";
+
+        createIndex(indexName, mapping);
+
+        index(indexName, ImmutableMap.<String, Object>builder()
+                .build());
+
+        index(indexName, ImmutableMap.<String, Object>builder()
+                .put("a", "hello")
+                .build());
+
+        index(indexName, ImmutableMap.<String, Object>builder()
+                .put("a", ImmutableList.of("foo", "bar"))
+                .build());
+
+        assertQuery(
+                "SELECT a FROM test_mixed_arrays",
+                "VALUES NULL, ARRAY['hello'], ARRAY['foo', 'bar']");
     }
 
     @Test

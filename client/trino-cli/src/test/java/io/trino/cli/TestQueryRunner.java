@@ -103,6 +103,7 @@ public class TestQueryRunner
         return new ClientSession(
                 server.url("/").uri(),
                 "user",
+                Optional.empty(),
                 "source",
                 Optional.empty(),
                 ImmutableSet.of(),
@@ -163,6 +164,7 @@ public class TestQueryRunner
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
+                false,
                 false);
     }
 

@@ -70,7 +70,6 @@ import static java.util.Collections.emptyList;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.function.Function.identity;
-import static java.util.stream.Collectors.toMap;
 
 public class InformationSchemaMetadata
         implements ConnectorMetadata
@@ -146,7 +145,7 @@ public class InformationSchemaMetadata
 
         return tableMetadata.getColumns().stream()
                 .map(ColumnMetadata::getName)
-                .collect(toMap(identity(), InformationSchemaColumnHandle::new));
+                .collect(toImmutableMap(identity(), InformationSchemaColumnHandle::new));
     }
 
     @Override
@@ -264,7 +263,7 @@ public class InformationSchemaMetadata
         if (roles.isPresent()) {
             Set<String> result = roles.get().stream()
                     .filter(this::isLowerCase)
-                    .filter(role -> !predicate.isPresent() || predicate.get().test(roleAsFixedValues(role)))
+                    .filter(role -> predicate.isEmpty() || predicate.get().test(roleAsFixedValues(role)))
                     .collect(toImmutableSet());
 
             if (result.isEmpty()) {
@@ -301,7 +300,7 @@ public class InformationSchemaMetadata
 
         Set<String> result = grantees.get().stream()
                 .filter(this::isLowerCase)
-                .filter(role -> !predicate.isPresent() || predicate.get().test(granteeAsFixedValues(role)))
+                .filter(role -> predicate.isEmpty() || predicate.get().test(granteeAsFixedValues(role)))
                 .collect(toImmutableSet());
 
         if (!result.isEmpty() && result.size() <= MAX_ROLE_COUNT) {

@@ -112,6 +112,11 @@ import io.trino.sql.tree.LikePredicate;
 import io.trino.sql.tree.Limit;
 import io.trino.sql.tree.LogicalBinaryExpression;
 import io.trino.sql.tree.LongLiteral;
+import io.trino.sql.tree.Merge;
+import io.trino.sql.tree.MergeCase;
+import io.trino.sql.tree.MergeDelete;
+import io.trino.sql.tree.MergeInsert;
+import io.trino.sql.tree.MergeUpdate;
 import io.trino.sql.tree.NaturalJoin;
 import io.trino.sql.tree.Node;
 import io.trino.sql.tree.NodeLocation;
@@ -186,11 +191,16 @@ import io.trino.sql.tree.TryExpression;
 import io.trino.sql.tree.TypeParameter;
 import io.trino.sql.tree.Union;
 import io.trino.sql.tree.Unnest;
+import io.trino.sql.tree.Update;
+import io.trino.sql.tree.UpdateAssignment;
 import io.trino.sql.tree.Use;
 import io.trino.sql.tree.Values;
 import io.trino.sql.tree.WhenClause;
 import io.trino.sql.tree.Window;
+import io.trino.sql.tree.WindowDefinition;
 import io.trino.sql.tree.WindowFrame;
+import io.trino.sql.tree.WindowReference;
+import io.trino.sql.tree.WindowSpecification;
 import io.trino.sql.tree.With;
 import io.trino.sql.tree.WithQuery;
 import org.antlr.v4.runtime.ParserRuleContext;
@@ -432,6 +442,70 @@ class AstBuilder
                 getLocation(context),
                 new Table(getLocation(context), getQualifiedName(context.qualifiedName())),
                 visitIfPresent(context.booleanExpression(), Expression.class));
+    }
+
+    @Override
+    public Node visitUpdate(SqlBaseParser.UpdateContext context)
+    {
+        return new Update(
+                getLocation(context),
+                new Table(getLocation(context), getQualifiedName(context.qualifiedName())),
+                visit(context.updateAssignment(), UpdateAssignment.class),
+                visitIfPresent(context.booleanExpression(), Expression.class));
+    }
+
+    @Override
+    public Node visitUpdateAssignment(SqlBaseParser.UpdateAssignmentContext context)
+    {
+        return new UpdateAssignment((Identifier) visit(context.identifier()), (Expression) visit(context.expression()));
+    }
+
+    @Override
+    public Node visitMerge(SqlBaseParser.MergeContext context)
+    {
+        return new Merge(
+                getLocation(context),
+                new Table(getLocation(context), getQualifiedName(context.qualifiedName())),
+                visitIfPresent(context.identifier(), Identifier.class),
+                (Relation) visit(context.relation()),
+                (Expression) visit(context.expression()),
+                visit(context.mergeCase(), MergeCase.class));
+    }
+
+    @Override
+    public Node visitMergeInsert(SqlBaseParser.MergeInsertContext context)
+    {
+        return new MergeInsert(
+                getLocation(context),
+                visitIfPresent(context.condition, Expression.class),
+                visitIdentifiers(context.targets),
+                visit(context.values, Expression.class));
+    }
+
+    private List<Identifier> visitIdentifiers(List<SqlBaseParser.IdentifierContext> identifiers)
+    {
+        return identifiers.stream()
+                .map(identifier -> (Identifier) visit(identifier))
+                .collect(toImmutableList());
+    }
+
+    @Override
+    public Node visitMergeUpdate(SqlBaseParser.MergeUpdateContext context)
+    {
+        ImmutableList.Builder<MergeUpdate.Assignment> assignments = ImmutableList.builder();
+        for (int i = 0; i < context.targets.size(); i++) {
+            assignments.add(new MergeUpdate.Assignment(
+                    (Identifier) visit(context.targets.get(i)),
+                    (Expression) visit(context.values.get(i))));
+        }
+
+        return new MergeUpdate(getLocation(context), visitIfPresent(context.condition, Expression.class), assignments.build());
+    }
+
+    @Override
+    public Node visitMergeDelete(SqlBaseParser.MergeDeleteContext context)
+    {
+        return new MergeDelete(getLocation(context), visitIfPresent(context.condition, Expression.class));
     }
 
     @Override
@@ -781,6 +855,7 @@ class AstBuilder
                             query.getWhere(),
                             query.getGroupBy(),
                             query.getHaving(),
+                            query.getWindows(),
                             orderBy,
                             offset,
                             limit),
@@ -824,6 +899,7 @@ class AstBuilder
                 visitIfPresent(context.where, Expression.class),
                 visitIfPresent(context.groupBy(), GroupBy.class),
                 visitIfPresent(context.having, Expression.class),
+                visit(context.windowDefinition(), WindowDefinition.class),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
@@ -859,6 +935,31 @@ class AstBuilder
         return new GroupingSets(getLocation(context), context.groupingSet().stream()
                 .map(groupingSet -> visit(groupingSet.expression(), Expression.class))
                 .collect(toList()));
+    }
+
+    @Override
+    public Node visitWindowSpecification(SqlBaseParser.WindowSpecificationContext context)
+    {
+        Optional<OrderBy> orderBy = Optional.empty();
+        if (context.ORDER() != null) {
+            orderBy = Optional.of(new OrderBy(getLocation(context.ORDER()), visit(context.sortItem(), SortItem.class)));
+        }
+
+        return new WindowSpecification(
+                getLocation(context),
+                visitIfPresent(context.existingWindowName, Identifier.class),
+                visit(context.partition, Expression.class),
+                orderBy,
+                visitIfPresent(context.windowFrame(), WindowFrame.class));
+    }
+
+    @Override
+    public Node visitWindowDefinition(SqlBaseParser.WindowDefinitionContext context)
+    {
+        return new WindowDefinition(
+                getLocation(context),
+                (Identifier) visit(context.name),
+                (WindowSpecification) visit(context.windowSpecification()));
     }
 
     @Override
@@ -1823,16 +1924,11 @@ class AstBuilder
     @Override
     public Node visitOver(SqlBaseParser.OverContext context)
     {
-        Optional<OrderBy> orderBy = Optional.empty();
-        if (context.ORDER() != null) {
-            orderBy = Optional.of(new OrderBy(getLocation(context.ORDER()), visit(context.sortItem(), SortItem.class)));
+        if (context.windowName != null) {
+            return new WindowReference(getLocation(context), (Identifier) visit(context.windowName));
         }
 
-        return new Window(
-                getLocation(context),
-                visit(context.partition, Expression.class),
-                orderBy,
-                visitIfPresent(context.windowFrame(), WindowFrame.class));
+        return visit(context.windowSpecification());
     }
 
     @Override
@@ -2364,12 +2460,6 @@ class AstBuilder
     {
         return Optional.ofNullable(context)
                 .map(ParseTree::getText);
-    }
-
-    private static Optional<String> getTextIfPresent(Token token)
-    {
-        return Optional.ofNullable(token)
-                .map(Token::getText);
     }
 
     private Optional<Identifier> getIdentifierIfPresent(ParserRuleContext context)

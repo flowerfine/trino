@@ -72,7 +72,7 @@ public class MemoryPool
 
     public MemoryPool(MemoryPoolId id, DataSize size)
     {
-        this.id = requireNonNull(id, "name is null");
+        this.id = requireNonNull(id, "id is null");
         requireNonNull(size, "size is null");
         maxBytes = size.toBytes();
     }
@@ -273,7 +273,7 @@ public class MemoryPool
     }
 
     @Managed
-    public synchronized long getMaxBytes()
+    public long getMaxBytes()
     {
         return maxBytes;
     }

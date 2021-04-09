@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -76,7 +77,6 @@ import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.common.collect.Sets.newConcurrentHashSet;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static io.airlift.concurrent.MoreFutures.tryGetFutureValue;
 import static io.airlift.concurrent.MoreFutures.whenAnyComplete;
@@ -107,7 +107,7 @@ import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.function.Function.identity;
-import static java.util.stream.Collectors.toSet;
+import static java.util.stream.Collectors.toCollection;
 
 public class SqlQueryScheduler
 {
@@ -181,7 +181,7 @@ public class SqlQueryScheduler
             DynamicFilterService dynamicFilterService)
     {
         this.queryStateMachine = requireNonNull(queryStateMachine, "queryStateMachine is null");
-        this.executionPolicy = requireNonNull(executionPolicy, "schedulerPolicyFactory is null");
+        this.executionPolicy = requireNonNull(executionPolicy, "executionPolicy is null");
         this.schedulerStats = requireNonNull(schedulerStats, "schedulerStats is null");
         this.summarizeTaskInfo = summarizeTaskInfo;
         this.dynamicFilterService = requireNonNull(dynamicFilterService, "dynamicFilterService is null");
@@ -350,7 +350,7 @@ public class SqlQueryScheduler
             SplitSource splitSource = entry.getValue();
             Optional<CatalogName> catalogName = Optional.of(splitSource.getCatalogName())
                     .filter(catalog -> !isInternalSystemConnector(catalog));
-            NodeSelector nodeSelector = nodeScheduler.createNodeSelector(catalogName);
+            NodeSelector nodeSelector = nodeScheduler.createNodeSelector(session, catalogName);
             SplitPlacementPolicy placementPolicy = new DynamicSplitPlacementPolicy(nodeSelector, stage::getAllTasks);
 
             checkArgument(!plan.getFragment().getStageExecutionDescriptor().isStageGroupedExecution());
@@ -377,7 +377,7 @@ public class SqlQueryScheduler
                     stage,
                     sourceTasksProvider,
                     writerTasksProvider,
-                    nodeScheduler.createNodeSelector(Optional.empty()),
+                    nodeScheduler.createNodeSelector(session, Optional.empty()),
                     schedulerExecutor,
                     getWriterMinSize(session));
             whenAllStages(childStages, StageState::isDone)
@@ -412,7 +412,7 @@ public class SqlQueryScheduler
                     // verify execution is consistent with planner's decision on dynamic lifespan schedule
                     verify(bucketNodeMap.isDynamic() == dynamicLifespanSchedule);
 
-                    stageNodeList = new ArrayList<>(nodeScheduler.createNodeSelector(catalogName).allNodes());
+                    stageNodeList = new ArrayList<>(nodeScheduler.createNodeSelector(session, catalogName).allNodes());
                     Collections.shuffle(stageNodeList);
                     bucketToPartition = Optional.empty();
                 }
@@ -439,7 +439,7 @@ public class SqlQueryScheduler
                         bucketNodeMap,
                         splitBatchSize,
                         getConcurrentLifespansPerNode(session),
-                        nodeScheduler.createNodeSelector(catalogName),
+                        nodeScheduler.createNodeSelector(session, catalogName),
                         connectorPartitionHandles,
                         dynamicFilterService));
             }
@@ -649,9 +649,9 @@ public class SqlQueryScheduler
     private static ListenableFuture<?> whenAllStages(Collection<SqlStageExecution> stages, Predicate<StageState> predicate)
     {
         checkArgument(!stages.isEmpty(), "stages is empty");
-        Set<StageId> stageIds = newConcurrentHashSet(stages.stream()
+        Set<StageId> stageIds = stages.stream()
                 .map(SqlStageExecution::getStageId)
-                .collect(toSet()));
+                .collect(toCollection(Sets::newConcurrentHashSet));
         SettableFuture<?> future = SettableFuture.create();
 
         for (SqlStageExecution stage : stages) {

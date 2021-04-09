@@ -124,10 +124,10 @@ public class SuiteRun
         @Option(names = "--cli-executable", paramLabel = "<jar>", description = "Path to CLI executable " + DEFAULT_VALUE, defaultValue = "${cli.bin}")
         public File cliJar;
 
-        @Option(names = "--logs-dir", paramLabel = "<dir>", description = "Location of the exported logs directory " + DEFAULT_VALUE, converter = OptionalPathConverter.class, defaultValue = "")
+        @Option(names = "--logs-dir", paramLabel = "<dir>", description = "Location of the exported logs directory " + DEFAULT_VALUE)
         public Optional<Path> logsDirBase;
 
-        @Option(names = "--timeout", paramLabel = "<timeout>", description = "Maximum duration of suite execution " + DEFAULT_VALUE, converter = DurationConverter.class, defaultValue = "999d")
+        @Option(names = "--timeout", paramLabel = "<timeout>", description = "Maximum duration of suite execution " + DEFAULT_VALUE, defaultValue = "999d")
         public Duration timeout;
 
         public Module toModule()
@@ -350,7 +350,7 @@ public class SuiteRun
     static class TestRunResult
     {
         public static final Object[] HEADER = {
-            "id", "suite", "environment", "config", "status", "elapsed", "error"
+                "id", "suite", "environment", "config", "status", "elapsed", "error"
         };
 
         private final String runId;
@@ -365,7 +365,7 @@ public class SuiteRun
             this.suiteName = suiteName;
             this.runId = runId;
             this.suiteRun = requireNonNull(suiteRun, "suiteRun is null");
-            this.environmentConfig = requireNonNull(environmentConfig, "suiteConfig is null");
+            this.environmentConfig = requireNonNull(environmentConfig, "environmentConfig is null");
             this.duration = requireNonNull(duration, "duration is null");
             this.throwable = requireNonNull(throwable, "throwable is null");
         }
@@ -391,13 +391,13 @@ public class SuiteRun
         public Object[] toRow()
         {
             return new Object[] {
-                runId,
-                suiteName,
-                suiteRun.getEnvironmentName(),
-                environmentConfig.getConfigName(),
-                hasFailed() ? "FAILED" : "SUCCESS",
-                duration,
-                throwable.map(Throwable::getMessage).orElse("-")};
+                    runId,
+                    suiteName,
+                    suiteRun.getEnvironmentName(),
+                    environmentConfig.getConfigName(),
+                    hasFailed() ? "FAILED" : "SUCCESS",
+                    duration,
+                    throwable.map(Throwable::getMessage).orElse("-")};
         }
     }
 }

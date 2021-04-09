@@ -106,9 +106,9 @@ import io.trino.operator.index.IndexJoinLookupStats;
 import io.trino.plugin.base.security.AllowAllSystemAccessControl;
 import io.trino.security.GroupProviderManager;
 import io.trino.server.PluginManager;
-import io.trino.server.PluginManagerConfig;
 import io.trino.server.SessionPropertyDefaults;
 import io.trino.server.security.CertificateAuthenticatorManager;
+import io.trino.server.security.PasswordAuthenticatorConfig;
 import io.trino.server.security.PasswordAuthenticatorManager;
 import io.trino.spi.PageIndexerFactory;
 import io.trino.spi.PageSorter;
@@ -212,8 +212,6 @@ import static io.trino.sql.ParsingUtil.createParsingOptions;
 import static io.trino.sql.planner.LogicalPlanner.Stage.OPTIMIZED_AND_VALIDATED;
 import static io.trino.sql.planner.optimizations.PlanNodeSearcher.searchFrom;
 import static io.trino.sql.testing.TreeAssertions.assertFormattedSql;
-import static io.trino.testing.TestingSession.TESTING_CATALOG;
-import static io.trino.testing.TestingSession.createBogusTestingCatalog;
 import static io.trino.transaction.TransactionBuilder.transaction;
 import static io.trino.version.EmbedVersion.testingVersionEmbedder;
 import static java.util.Objects.requireNonNull;
@@ -247,6 +245,7 @@ public class LocalQueryRunner
     private final IndexManager indexManager;
     private final NodePartitioningManager nodePartitioningManager;
     private final PageSinkManager pageSinkManager;
+    private final CatalogManager catalogManager;
     private final TransactionManager transactionManager;
     private final FileSingleStreamSpillerFactory singleStreamSpillerFactory;
     private final SpillerFactory spillerFactory;
@@ -309,7 +308,7 @@ public class LocalQueryRunner
         NodeScheduler nodeScheduler = new NodeScheduler(new UniformNodeSelectorFactory(nodeManager, nodeSchedulerConfig, new NodeTaskMap(finalizerService)));
         this.featuresConfig = requireNonNull(featuresConfig, "featuresConfig is null");
         this.pageSinkManager = new PageSinkManager();
-        CatalogManager catalogManager = new CatalogManager();
+        this.catalogManager = new CatalogManager();
         this.transactionManager = InMemoryTransactionManager.create(
                 new TransactionManagerConfig().setIdleTimeout(new Duration(1, TimeUnit.DAYS)),
                 yieldExecutor,
@@ -319,7 +318,7 @@ public class LocalQueryRunner
 
         this.metadata = new MetadataManager(
                 featuresConfig,
-                new SessionPropertyManager(new SystemSessionProperties(new QueryManagerConfig(), taskManagerConfig, new MemoryManagerConfig(), featuresConfig, new NodeMemoryConfig(), new DynamicFilterConfig())),
+                new SessionPropertyManager(new SystemSessionProperties(new QueryManagerConfig(), taskManagerConfig, new MemoryManagerConfig(), featuresConfig, new NodeMemoryConfig(), new DynamicFilterConfig(), new NodeSchedulerConfig())),
                 new SchemaPropertyManager(),
                 new TablePropertyManager(),
                 new ColumnPropertyManager(),
@@ -363,7 +362,8 @@ public class LocalQueryRunner
                 pageIndexerFactory,
                 transactionManager,
                 eventListenerManager,
-                typeOperators);
+                typeOperators,
+                nodeSchedulerConfig);
 
         GlobalSystemConnectorFactory globalSystemConnectorFactory = new GlobalSystemConnectorFactory(ImmutableSet.of(
                 new NodeSystemTable(nodeManager),
@@ -377,13 +377,12 @@ public class LocalQueryRunner
                 ImmutableSet.of());
 
         this.pluginManager = new PluginManager(
-                nodeInfo,
-                new PluginManagerConfig(),
+                (loader, createClassLoader) -> {},
                 connectorManager,
                 metadata,
                 new NoOpResourceGroupManager(),
                 accessControl,
-                new PasswordAuthenticatorManager(),
+                Optional.of(new PasswordAuthenticatorManager(new PasswordAuthenticatorConfig())),
                 new CertificateAuthenticatorManager(),
                 eventListenerManager,
                 new GroupProviderManager(),
@@ -391,10 +390,6 @@ public class LocalQueryRunner
 
         connectorManager.addConnectorFactory(globalSystemConnectorFactory, globalSystemConnectorFactory.getClass()::getClassLoader);
         connectorManager.createCatalog(GlobalSystemConnector.NAME, GlobalSystemConnector.NAME, ImmutableMap.of());
-
-        // add bogus connector for testing session properties
-        catalogManager.registerCatalog(createBogusTestingCatalog(TESTING_CATALOG));
-        metadata.getSessionPropertyManager().addConnectorSessionProperties(new CatalogName(TESTING_CATALOG), defaultSessionProperties.getOrDefault(TESTING_CATALOG, ImmutableList.of()));
 
         // rewrite session to use managed SessionPropertyMetadata
         this.defaultSession = new Session(
@@ -467,6 +462,11 @@ public class LocalQueryRunner
     public int getNodeCount()
     {
         return 1;
+    }
+
+    public CatalogManager getCatalogManager()
+    {
+        return catalogManager;
     }
 
     @Override
@@ -870,7 +870,8 @@ public class LocalQueryRunner
                 estimatedExchangesCostCalculator,
                 new CostComparator(featuresConfig),
                 taskCountEstimator,
-                new RuleStatsRecorder()).get();
+                new RuleStatsRecorder(),
+                nodePartitioningManager).get();
     }
 
     public Plan createPlan(Session session, @Language("SQL") String sql, List<PlanOptimizer> optimizers, WarningCollector warningCollector)
@@ -930,7 +931,7 @@ public class LocalQueryRunner
 
     public static class Builder
     {
-        private Session defaultSession;
+        private final Session defaultSession;
         private FeaturesConfig featuresConfig = new FeaturesConfig();
         private NodeSpillConfig nodeSpillConfig = new NodeSpillConfig();
         private boolean initialTransaction;

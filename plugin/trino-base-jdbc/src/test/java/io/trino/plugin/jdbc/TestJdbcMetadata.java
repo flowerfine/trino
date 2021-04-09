@@ -16,7 +16,6 @@ package io.trino.plugin.jdbc;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import io.trino.spi.TrinoException;
 import io.trino.spi.connector.AggregateFunction;
 import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.ColumnHandle;
@@ -49,12 +48,14 @@ import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.spi.type.VarcharType.createVarcharType;
 import static io.trino.testing.TestingConnectorSession.SESSION;
+import static io.trino.testing.assertions.TrinoExceptionAssert.assertTrinoExceptionThrownBy;
+import static java.lang.String.format;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
-import static org.testng.Assert.fail;
 
 @Test(singleThreaded = true)
 public class TestJdbcMetadata
@@ -111,12 +112,9 @@ public class TestJdbcMetadata
 
     private void unknownTableColumnHandle(JdbcTableHandle tableHandle)
     {
-        try {
-            metadata.getColumnHandles(SESSION, tableHandle);
-            fail("Expected getColumnHandle of unknown table to throw a TableNotFoundException");
-        }
-        catch (TableNotFoundException ignored) {
-        }
+        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, tableHandle))
+                .isInstanceOf(TableNotFoundException.class)
+                .hasMessage(format("Table '%s' has no supported columns (all 0 columns are not supported)", tableHandle.getSchemaTableName()));
     }
 
     @Test
@@ -146,12 +144,9 @@ public class TestJdbcMetadata
 
     private void unknownTableMetadata(JdbcTableHandle tableHandle)
     {
-        try {
-            metadata.getTableMetadata(SESSION, tableHandle);
-            fail("Expected getTableMetadata of unknown table to throw a TableNotFoundException");
-        }
-        catch (TableNotFoundException ignored) {
-        }
+        assertThatThrownBy(() -> metadata.getTableMetadata(SESSION, tableHandle))
+                .isInstanceOf(TableNotFoundException.class)
+                .hasMessage(format("Table '%s' has no supported columns (all 0 columns are not supported)", tableHandle.getSchemaTableName()));
     }
 
     @Test
@@ -228,24 +223,16 @@ public class TestJdbcMetadata
     @Test
     public void testDropTableTable()
     {
-        try {
-            metadata.dropTable(SESSION, tableHandle);
-            fail("expected exception");
-        }
-        catch (TrinoException e) {
-            assertEquals(e.getErrorCode(), PERMISSION_DENIED.toErrorCode());
-        }
+        assertTrinoExceptionThrownBy(() -> metadata.dropTable(SESSION, tableHandle))
+                .hasErrorCode(PERMISSION_DENIED)
+                .hasMessage("DROP TABLE is disabled in this catalog");
 
         metadata = new JdbcMetadata(database.getJdbcClient(), true);
         metadata.dropTable(SESSION, tableHandle);
 
-        try {
-            metadata.getTableMetadata(SESSION, tableHandle);
-            fail("expected exception");
-        }
-        catch (TrinoException e) {
-            assertEquals(e.getErrorCode(), NOT_FOUND.toErrorCode());
-        }
+        assertTrinoExceptionThrownBy(() -> metadata.getTableMetadata(SESSION, tableHandle))
+                .hasErrorCode(NOT_FOUND)
+                .hasMessageMatching("Table '.*' has no supported columns \\(all \\d+ columns are not supported\\)");
     }
 
     @Test
@@ -284,7 +271,7 @@ public class TestJdbcMetadata
         ConnectorTableHandle aggregatedTable = applyCountAggregation(session, baseTableHandle, ImmutableList.of(ImmutableList.of(groupByColumn)));
 
         Domain domain = Domain.singleValue(VARCHAR, utf8Slice("one"));
-        JdbcTableHandle tableHandleWithFilter = applyConstraint(session, aggregatedTable, new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(groupByColumn, domain))));
+        JdbcTableHandle tableHandleWithFilter = applyFilter(session, aggregatedTable, new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(groupByColumn, domain))));
 
         assertEquals(tableHandleWithFilter.getConstraint().getDomains(), Optional.of(ImmutableMap.of(groupByColumn, domain)));
     }
@@ -299,15 +286,23 @@ public class TestJdbcMetadata
         ConnectorTableHandle baseTableHandle = metadata.getTableHandle(session, new SchemaTableName("example", "numbers"));
 
         Domain firstDomain = Domain.multipleValues(VARCHAR, ImmutableList.of(utf8Slice("one"), utf8Slice("two")));
-        JdbcTableHandle filterResult = applyConstraint(session, baseTableHandle, new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(groupByColumn, firstDomain))));
+        JdbcTableHandle filterResult = applyFilter(session, baseTableHandle, new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(groupByColumn, firstDomain))));
 
         ConnectorTableHandle aggregatedTable = applyCountAggregation(session, filterResult, ImmutableList.of(ImmutableList.of(groupByColumn)));
 
         Domain secondDomain = Domain.multipleValues(VARCHAR, ImmutableList.of(utf8Slice("one"), utf8Slice("three")));
-        JdbcTableHandle tableHandleWithFilter = applyConstraint(session, aggregatedTable, new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(groupByColumn, secondDomain))));
+        JdbcTableHandle tableHandleWithFilter = applyFilter(session, aggregatedTable, new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(groupByColumn, secondDomain))));
         assertEquals(
                 tableHandleWithFilter.getConstraint().getDomains(),
-                Optional.of(ImmutableMap.of(groupByColumn, Domain.singleValue(VARCHAR, utf8Slice("one")))));
+                // The query effectively intersects firstDomain and secondDomain, but this is not visible in JdbcTableHandle.constraint,
+                // as firstDomain has been converted into a PreparedQuery
+                Optional.of(ImmutableMap.of(groupByColumn, secondDomain)));
+        assertEquals(
+                ((JdbcQueryRelationHandle) tableHandleWithFilter.getRelationHandle()).getPreparedQuery().getQuery(),
+                "SELECT \"TEXT\", count(*) AS \"_pfgnrtd_0\" " +
+                        "FROM \"" + database.getDatabaseName() + "\".\"EXAMPLE\".\"NUMBERS\" " +
+                        "WHERE \"TEXT\" IN (?,?) " +
+                        "GROUP BY \"TEXT\"");
     }
 
     @Test
@@ -324,11 +319,18 @@ public class TestJdbcMetadata
         ConnectorTableHandle aggregatedTable = applyCountAggregation(session, baseTableHandle, ImmutableList.of(ImmutableList.of(groupByColumn)));
 
         Domain domain = Domain.singleValue(BIGINT, 123L);
-        Optional<ConstraintApplicationResult<ConnectorTableHandle>> filterResult = metadata.applyFilter(
+        JdbcTableHandle tableHandleWithFilter = applyFilter(
                 session,
                 aggregatedTable,
                 new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(nonGroupByColumn, domain))));
-        assertThat(filterResult).isEmpty();
+        assertEquals(
+                tableHandleWithFilter.getConstraint().getDomains(),
+                Optional.of(ImmutableMap.of(nonGroupByColumn, domain)));
+        assertEquals(
+                ((JdbcQueryRelationHandle) tableHandleWithFilter.getRelationHandle()).getPreparedQuery().getQuery(),
+                "SELECT \"TEXT\", count(*) AS \"_pfgnrtd_0\" " +
+                        "FROM \"" + database.getDatabaseName() + "\".\"EXAMPLE\".\"NUMBERS\" " +
+                        "GROUP BY \"TEXT\"");
     }
 
     @Test
@@ -346,11 +348,18 @@ public class TestJdbcMetadata
         ConnectorTableHandle aggregatedTable = applyCountAggregation(session, baseTableHandle, ImmutableList.of(ImmutableList.of(textColumn, valueColumn), ImmutableList.of(textColumn)));
 
         Domain domain = Domain.singleValue(BIGINT, 123L);
-        Optional<ConstraintApplicationResult<ConnectorTableHandle>> filterResult = metadata.applyFilter(
+        JdbcTableHandle tableHandleWithFilter = applyFilter(
                 session,
                 aggregatedTable,
                 new Constraint(TupleDomain.withColumnDomains(ImmutableMap.of(valueColumn, domain))));
-        assertThat(filterResult).isEmpty();
+        assertEquals(
+                tableHandleWithFilter.getConstraint().getDomains(),
+                Optional.of(ImmutableMap.of(valueColumn, domain)));
+        assertEquals(
+                ((JdbcQueryRelationHandle) tableHandleWithFilter.getRelationHandle()).getPreparedQuery().getQuery(),
+                "SELECT \"TEXT\", \"VALUE\", count(*) AS \"_pfgnrtd_0\" " +
+                        "FROM \"" + database.getDatabaseName() + "\".\"EXAMPLE\".\"NUMBERS\" " +
+                        "GROUP BY GROUPING SETS ((\"TEXT\", \"VALUE\"), (\"TEXT\"))");
     }
 
     private JdbcTableHandle applyCountAggregation(ConnectorSession session, ConnectorTableHandle tableHandle, List<List<ColumnHandle>> groupByColumns)
@@ -365,7 +374,7 @@ public class TestJdbcMetadata
         return (JdbcTableHandle) aggResult.get().getHandle();
     }
 
-    private JdbcTableHandle applyConstraint(ConnectorSession session, ConnectorTableHandle tableHandle, Constraint constraint)
+    private JdbcTableHandle applyFilter(ConnectorSession session, ConnectorTableHandle tableHandle, Constraint constraint)
     {
         Optional<ConstraintApplicationResult<ConnectorTableHandle>> filterResult = metadata.applyFilter(
                 session,
@@ -392,16 +401,10 @@ public class TestJdbcMetadata
         }
 
         @Override
-        public boolean supportsGroupingSets()
-        {
-            return true;
-        }
-
-        @Override
         public boolean supportsAggregationPushdown(ConnectorSession session, JdbcTableHandle table, List<List<ColumnHandle>> groupingSets)
         {
             // disable aggregation pushdown for any table named no_agg_pushdown
-            return !"no_aggregation_pushdown".equalsIgnoreCase(table.getRemoteTableName().getTableName());
+            return !"no_aggregation_pushdown".equalsIgnoreCase(table.getRequiredNamedRelation().getRemoteTableName().getTableName());
         }
     }
 }

@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>352-SNAPSHOT</version>
+        <version>356-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -140,12 +140,6 @@
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>testing</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.anarres.lzo</groupId>
-            <artifactId>lzo-hadoop</artifactId>
             <scope>test</scope>
         </dependency>
 

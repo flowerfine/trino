@@ -63,6 +63,11 @@ import io.trino.sql.tree.JoinUsing;
 import io.trino.sql.tree.Lateral;
 import io.trino.sql.tree.LikeClause;
 import io.trino.sql.tree.Limit;
+import io.trino.sql.tree.Merge;
+import io.trino.sql.tree.MergeCase;
+import io.trino.sql.tree.MergeDelete;
+import io.trino.sql.tree.MergeInsert;
+import io.trino.sql.tree.MergeUpdate;
 import io.trino.sql.tree.NaturalJoin;
 import io.trino.sql.tree.Node;
 import io.trino.sql.tree.Offset;
@@ -112,22 +117,28 @@ import io.trino.sql.tree.TransactionAccessMode;
 import io.trino.sql.tree.TransactionMode;
 import io.trino.sql.tree.Union;
 import io.trino.sql.tree.Unnest;
+import io.trino.sql.tree.Update;
+import io.trino.sql.tree.UpdateAssignment;
 import io.trino.sql.tree.Values;
+import io.trino.sql.tree.WindowDefinition;
 import io.trino.sql.tree.With;
 import io.trino.sql.tree.WithQuery;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Iterables.getOnlyElement;
+import static com.google.common.collect.Iterables.transform;
 import static io.trino.sql.ExpressionFormatter.formatExpression;
 import static io.trino.sql.ExpressionFormatter.formatGroupBy;
 import static io.trino.sql.ExpressionFormatter.formatOrderBy;
 import static io.trino.sql.ExpressionFormatter.formatStringLiteral;
+import static io.trino.sql.ExpressionFormatter.formatWindowSpecification;
 import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
 
@@ -314,6 +325,25 @@ public final class SqlFormatter
                         .append('\n');
             }
 
+            if (!node.getWindows().isEmpty()) {
+                append(indent, "WINDOW");
+                if (node.getWindows().size() == 1) {
+                    builder.append(" ")
+                            .append(formatWindowDefinition(node.getWindows().get(0)))
+                            .append("\n");
+                }
+                else {
+                    int size = node.getWindows().size();
+                    builder.append("\n");
+                    for (int i = 0; i < size - 1; i++) {
+                        append(indent + 1, formatWindowDefinition(node.getWindows().get(i)))
+                                .append(",\n");
+                    }
+                    append(indent + 1, formatWindowDefinition(node.getWindows().get(size - 1)))
+                            .append("\n");
+                }
+            }
+
             if (node.getOrderBy().isPresent()) {
                 process(node.getOrderBy().get(), indent);
             }
@@ -326,6 +356,11 @@ public final class SqlFormatter
                 process(node.getLimit().get(), indent);
             }
             return null;
+        }
+
+        private String formatWindowDefinition(WindowDefinition definition)
+        {
+            return formatExpression(definition.getName()) + " AS " + formatWindowSpecification(definition.getWindow());
         }
 
         @Override
@@ -600,6 +635,84 @@ public final class SqlFormatter
             }
 
             return null;
+        }
+
+        @Override
+        protected Void visitMerge(Merge node, Integer indent)
+        {
+            builder.append("MERGE INTO ")
+                    .append(node.getTable().getName());
+
+            node.getTargetAlias().ifPresent(value -> builder.append(" ").append(value));
+            builder.append("\n");
+
+            append(indent + 1, "USING ");
+
+            processRelation(node.getRelation(), indent + 2);
+
+            builder.append("\n");
+            append(indent + 1, "ON ");
+            builder.append(formatExpression(node.getExpression()));
+
+            for (MergeCase mergeCase : node.getMergeCases()) {
+                builder.append("\n");
+                process(mergeCase, indent);
+            }
+
+            return null;
+        }
+
+        @Override
+        protected Void visitMergeInsert(MergeInsert node, Integer indent)
+        {
+            appendMergeCaseWhen(false, node.getExpression());
+            append(indent + 1, "THEN INSERT ");
+
+            if (!node.getColumns().isEmpty()) {
+                builder.append("(");
+                Joiner.on(", ").appendTo(builder, node.getColumns());
+                builder.append(")");
+            }
+
+            builder.append("VALUES (");
+            Joiner.on(", ").appendTo(builder, transform(node.getValues(), ExpressionFormatter::formatExpression));
+            builder.append(")");
+
+            return null;
+        }
+
+        @Override
+        protected Void visitMergeUpdate(MergeUpdate node, Integer indent)
+        {
+            appendMergeCaseWhen(true, node.getExpression());
+            append(indent + 1, "THEN UPDATE SET");
+
+            boolean first = true;
+            for (MergeUpdate.Assignment assignment : node.getAssignments()) {
+                builder.append("\n");
+                append(indent + 1, first ? "  " : ", ");
+                builder.append(assignment.getTarget())
+                        .append(" = ")
+                        .append(formatExpression(assignment.getValue()));
+                first = false;
+            }
+
+            return null;
+        }
+
+        @Override
+        protected Void visitMergeDelete(MergeDelete node, Integer indent)
+        {
+            appendMergeCaseWhen(true, node.getExpression());
+            append(indent + 1, "THEN DELETE");
+            return null;
+        }
+
+        private void appendMergeCaseWhen(boolean matched, Optional<Expression> expression)
+        {
+            builder.append(matched ? "WHEN MATCHED" : "WHEN NOT MATCHED");
+            expression.ifPresent(value -> builder.append(" AND ").append(formatExpression(value)));
+            builder.append("\n");
         }
 
         @Override
@@ -1071,9 +1184,8 @@ public final class SqlFormatter
                     return type.name();
                 case PRINCIPAL:
                     return formatPrincipal(grantor.getPrincipal().get());
-                default:
-                    throw new IllegalArgumentException("Unsupported principal type: " + type);
             }
+            throw new IllegalArgumentException("Unsupported principal type: " + type);
         }
 
         private static String formatPrincipal(PrincipalSpecification principal)
@@ -1085,9 +1197,8 @@ public final class SqlFormatter
                 case USER:
                 case ROLE:
                     return format("%s %s", type.name(), principal.getName().toString());
-                default:
-                    throw new IllegalArgumentException("Unsupported principal type: " + type);
             }
+            throw new IllegalArgumentException("Unsupported principal type: " + type);
         }
 
         @Override
@@ -1228,6 +1339,32 @@ public final class SqlFormatter
 
             process(node.getQuery(), indent);
 
+            return null;
+        }
+
+        @Override
+        protected Void visitUpdate(Update node, Integer indent)
+        {
+            builder.append("UPDATE ")
+                    .append(node.getTable().getName())
+                    .append(" SET");
+            int setCounter = node.getAssignments().size() - 1;
+            for (UpdateAssignment assignment : node.getAssignments()) {
+                builder.append("\n")
+                        .append(indentString(indent + 1))
+                        .append(assignment.getName().getValue())
+                        .append(" = ")
+                        .append(formatExpression(assignment.getValue()));
+                if (setCounter > 0) {
+                    builder.append(",");
+                }
+                setCounter--;
+            }
+            if (node.getWhere().isPresent()) {
+                builder.append("\n")
+                        .append(indentString(indent))
+                        .append("WHERE ").append(formatExpression(node.getWhere().get()));
+            }
             return null;
         }
 
@@ -1409,14 +1546,12 @@ public final class SqlFormatter
                 case ALL:
                 case NONE:
                     builder.append(type.toString());
-                    break;
+                    return null;
                 case ROLE:
                     builder.append(node.getRole().get());
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unsupported type: " + type);
+                    return null;
             }
-            return null;
+            throw new IllegalArgumentException("Unsupported type: " + type);
         }
 
         @Override

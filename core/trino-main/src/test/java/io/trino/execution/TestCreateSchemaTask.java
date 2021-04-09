@@ -65,8 +65,8 @@ public class TestCreateSchemaTask
                 .setTransactionId(transactionManager.beginTransaction(false))
                 .build();
         metadata = new TestCreateSchemaTask.MockMetadata(
-            schemaPropertyManager,
-            testCatalog.getConnectorCatalogName());
+                schemaPropertyManager,
+                testCatalog.getConnectorCatalogName());
     }
 
     @Test
@@ -97,7 +97,7 @@ public class TestCreateSchemaTask
     {
         private final CatalogName catalogHandle;
         private final List<CatalogSchemaName> schemas;
-        private SchemaPropertyManager schemaPropertyManager;
+        private final SchemaPropertyManager schemaPropertyManager;
 
         public MockMetadata(
                 SchemaPropertyManager schemaPropertyManager,

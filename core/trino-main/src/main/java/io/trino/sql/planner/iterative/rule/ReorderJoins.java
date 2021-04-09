@@ -331,6 +331,7 @@ public class ReorderJoins
                     joinConditions,
                     leftOutputSymbols,
                     rightOutputSymbols,
+                    false,
                     joinFilters.isEmpty() ? Optional.empty() : Optional.of(and(joinFilters)),
                     Optional.empty(),
                     Optional.empty(),
@@ -434,9 +435,8 @@ public class ReorderJoins
                     result.addAll(getPossibleJoinNodes(joinNode, PARTITIONED));
                     result.addAll(getPossibleJoinNodes(joinNode, REPLICATED, node -> canReplicate(node, context)));
                     return result.build();
-                default:
-                    throw new IllegalArgumentException("unexpected join distribution type: " + distributionType);
             }
+            throw new IllegalArgumentException("unexpected join distribution type: " + distributionType);
         }
 
         private List<JoinEnumerationResult> getPossibleJoinNodes(JoinNode joinNode, DistributionType distributionType)

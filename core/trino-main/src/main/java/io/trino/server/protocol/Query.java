@@ -221,7 +221,7 @@ class Query
         requireNonNull(exchangeClient, "exchangeClient is null");
         requireNonNull(resultsProcessorExecutor, "resultsProcessorExecutor is null");
         requireNonNull(timeoutExecutor, "timeoutExecutor is null");
-        requireNonNull(blockEncodingSerde, "serde is null");
+        requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
 
         this.queryManager = queryManager;
 
@@ -703,6 +703,8 @@ class Query
                         toClientTypeSignature(parameter.getNamedTypeSignature().getTypeSignature())));
             case LONG:
                 return ClientTypeSignatureParameter.ofLong(parameter.getLongLiteral());
+            case VARIABLE:
+                // not expected here
         }
         throw new IllegalArgumentException("Unsupported kind: " + parameter.getKind());
     }

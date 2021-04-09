@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.oracle;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.trino.plugin.jdbc.BaseJdbcClient;
@@ -21,6 +22,7 @@ import io.trino.plugin.jdbc.ColumnMapping;
 import io.trino.plugin.jdbc.ConnectionFactory;
 import io.trino.plugin.jdbc.DoubleWriteFunction;
 import io.trino.plugin.jdbc.JdbcColumnHandle;
+import io.trino.plugin.jdbc.JdbcJoinCondition;
 import io.trino.plugin.jdbc.JdbcTableHandle;
 import io.trino.plugin.jdbc.JdbcTypeHandle;
 import io.trino.plugin.jdbc.LongWriteFunction;
@@ -28,6 +30,7 @@ import io.trino.plugin.jdbc.SliceWriteFunction;
 import io.trino.plugin.jdbc.WriteMapping;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.JoinCondition;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.CharType;
 import io.trino.spi.type.Chars;
@@ -42,7 +45,6 @@ import javax.inject.Inject;
 
 import java.math.RoundingMode;
 import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -54,6 +56,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.Calendar;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -160,29 +163,17 @@ public class OracleClient
     {
         super(config, "\"", connectionFactory);
 
-        requireNonNull(oracleConfig, "oracle config is null");
+        requireNonNull(oracleConfig, "oracleConfig is null");
         this.synonymsEnabled = oracleConfig.isSynonymsEnabled();
     }
 
-    private String[] getTableTypes()
+    @Override
+    protected Optional<List<String>> getTableTypes()
     {
         if (synonymsEnabled) {
-            return new String[] {"TABLE", "VIEW", "SYNONYM"};
+            return Optional.of(ImmutableList.of("TABLE", "VIEW", "SYNONYM"));
         }
-        return new String[] {"TABLE", "VIEW"};
-    }
-
-    @Override
-    protected ResultSet getTables(Connection connection, Optional<String> schemaName, Optional<String> tableName)
-            throws SQLException
-    {
-        DatabaseMetaData metadata = connection.getMetaData();
-        String escape = metadata.getSearchStringEscape();
-        return metadata.getTables(
-                connection.getCatalog(),
-                escapeNamePattern(schemaName, escape).orElse(null),
-                escapeNamePattern(tableName, escape).orElse(null),
-                getTableTypes());
+        return Optional.of(ImmutableList.of("TABLE", "VIEW"));
     }
 
     @Override
@@ -213,7 +204,7 @@ public class OracleClient
     protected void renameTable(ConnectorSession session, String catalogName, String schemaName, String tableName, SchemaTableName newTable)
     {
         if (!schemaName.equalsIgnoreCase(newTable.getSchemaName())) {
-            throw new TrinoException(NOT_SUPPORTED, "Table rename across schemas is not supported in Oracle");
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support renaming tables across schemas");
         }
 
         String newTableName = newTable.getTableName().toUpperCase(ENGLISH);
@@ -235,6 +226,12 @@ public class OracleClient
     {
         // ORA-02420: missing schema authorization clause
         throw new TrinoException(NOT_SUPPORTED, "This connector does not support creating schemas");
+    }
+
+    @Override
+    public void dropSchema(ConnectorSession session, String schemaName)
+    {
+        throw new TrinoException(NOT_SUPPORTED, "This connector does not support dropping schemas");
     }
 
     @Override
@@ -346,6 +343,12 @@ public class OracleClient
             return mapToUnboundedVarchar(typeHandle);
         }
         return Optional.empty();
+    }
+
+    @Override
+    protected boolean isSupportedJoinCondition(JdbcJoinCondition joinCondition)
+    {
+        return joinCondition.getOperator() != JoinCondition.Operator.IS_DISTINCT_FROM;
     }
 
     public static LongWriteFunction oracleDateWriteFunction()
@@ -470,7 +473,7 @@ public class OracleClient
     {
         String sql = format(
                 "COMMENT ON COLUMN %s.%s IS '%s'",
-                quoted(handle.getRemoteTableName()),
+                quoted(handle.asPlainTable().getRemoteTableName()),
                 quoted(column.getColumnName()),
                 comment.orElse(""));
         execute(session, sql);

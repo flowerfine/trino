@@ -46,12 +46,11 @@ In addition, the Trino coordinator needs a `keytab file
 
 .. include:: ktadd-note.fragment
 
-Java keystore file for TLS
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+Configuration for TLS
+^^^^^^^^^^^^^^^^^^^^^
 
-When using Kerberos authentication, access to the Trino coordinator should be
-through HTTPS. You can do it by creating a :ref:`server_java_keystore` on the
-coordinator.
+When using Kerberos authentication, access to the Trino coordinator must be
+through :doc:`HTTPS and TLS </security/tls>`.
 
 System access control plugin
 ----------------------------
@@ -68,10 +67,10 @@ Trino coordinator to use Kerberos authentication and HTTPS. After making the
 following environment changes, you can make the changes to the Trino
 configuration files.
 
+* :doc:`/security/tls`
 * :ref:`server_kerberos_services`
 * :ref:`server_kerberos_configuration`
 * :ref:`server_kerberos_principals`
-* :ref:`server_java_keystore`
 * :doc:`System Access Control Plugin </develop/system-access-control>`
 
 config.properties
@@ -163,7 +162,7 @@ User mapping
 ------------
 
 After authenticating with Kerberos, the Trino server receives the user's principal which is typically similar to
-an email address.  For example, when ``alice`` logs in in Trino might receive ``alice@example.com``.  By default,
+an email address.  For example, when ``alice`` logs in Trino might receive ``alice@example.com``.  By default,
 Trino will use the full Kerberos principal name, but this can be mapped to a shorter name using a user-mapping
 pattern.  For simple mapping rules, the  ``http-server.authentication.krb5.user-mapping.pattern`` configuration
 property can be set to a Java regular expression, and Trino will use the value of the first matcher group.  If the

@@ -226,7 +226,7 @@ public class PinotMetadata
         }
         Optional<DynamicTable> dynamicTable = handle.getQuery();
         if (dynamicTable.isPresent() &&
-                (!dynamicTable.get().getLimit().isPresent() || dynamicTable.get().getLimit().getAsLong() > limit)) {
+                (dynamicTable.get().getLimit().isEmpty() || dynamicTable.get().getLimit().getAsLong() > limit)) {
             dynamicTable = Optional.of(new DynamicTable(dynamicTable.get().getTableName(),
                     dynamicTable.get().getSuffix(),
                     dynamicTable.get().getSelections(),
@@ -276,7 +276,7 @@ public class PinotMetadata
     @VisibleForTesting
     public List<PinotColumn> getPinotColumns(String tableName)
     {
-        String pinotTableName = getPinotTableNameFromPrestoTableName(tableName);
+        String pinotTableName = getPinotTableNameFromTrinoTableName(tableName);
         return getFromCache(pinotTableColumnCache, pinotTableName);
     }
 
@@ -299,18 +299,18 @@ public class PinotMetadata
         }
     }
 
-    private String getPinotTableNameFromPrestoTableName(String prestoTableName)
+    private String getPinotTableNameFromTrinoTableName(String trinoTableName)
     {
         List<String> allTables = getPinotTableNames();
         String pinotTableName = null;
         for (String candidate : allTables) {
-            if (prestoTableName.equalsIgnoreCase(candidate)) {
+            if (trinoTableName.equalsIgnoreCase(candidate)) {
                 pinotTableName = candidate;
                 break;
             }
         }
         if (pinotTableName == null) {
-            throw new TableNotFoundException(new SchemaTableName(SCHEMA_NAME, prestoTableName));
+            throw new TableNotFoundException(new SchemaTableName(SCHEMA_NAME, trinoTableName));
         }
         return pinotTableName;
     }
@@ -387,7 +387,7 @@ public class PinotMetadata
 
     private List<SchemaTableName> listTables(ConnectorSession session, SchemaTablePrefix prefix)
     {
-        if (!prefix.getSchema().isPresent() || !prefix.getTable().isPresent()) {
+        if (prefix.getSchema().isEmpty() || prefix.getTable().isEmpty()) {
             return listTables(session, Optional.empty());
         }
         return ImmutableList.of(new SchemaTableName(prefix.getSchema().get(), prefix.getTable().get()));

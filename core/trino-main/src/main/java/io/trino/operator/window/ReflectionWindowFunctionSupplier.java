@@ -36,7 +36,7 @@ public class ReflectionWindowFunctionSupplier<T extends WindowFunction>
     {
         NO_INPUTS,
         INPUTS,
-        INPUTS_IGNORE_NULLS;
+        INPUTS_IGNORE_NULLS
     }
 
     private final Constructor<T> constructor;
@@ -93,9 +93,8 @@ public class ReflectionWindowFunctionSupplier<T extends WindowFunction>
                     return constructor.newInstance(inputs);
                 case INPUTS_IGNORE_NULLS:
                     return constructor.newInstance(inputs, ignoreNulls);
-                default:
-                    throw new VerifyException("Unhandled constructor type: " + constructorType);
             }
+            throw new VerifyException("Unhandled constructor type: " + constructorType);
         }
         catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);

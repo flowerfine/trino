@@ -91,6 +91,7 @@ import io.trino.operator.PagesIndex;
 import io.trino.operator.index.IndexJoinLookupStats;
 import io.trino.server.ExpressionSerialization.ExpressionDeserializer;
 import io.trino.server.ExpressionSerialization.ExpressionSerializer;
+import io.trino.server.PluginManager.PluginsProvider;
 import io.trino.server.SliceSerialization.SliceDeserializer;
 import io.trino.server.SliceSerialization.SliceSerializer;
 import io.trino.server.remotetask.HttpLocationFactory;
@@ -98,7 +99,6 @@ import io.trino.spi.PageIndexerFactory;
 import io.trino.spi.PageSorter;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockEncodingSerde;
-import io.trino.spi.predicate.Range;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeOperators;
 import io.trino.spi.type.TypeSignature;
@@ -410,17 +410,15 @@ public class ServerMainModule
 
         // plugin manager
         binder.bind(PluginManager.class).in(Scopes.SINGLETON);
-        configBinder(binder).bindConfig(PluginManagerConfig.class);
+        newOptionalBinder(binder, PluginsProvider.class).setDefault()
+                .to(ServerPluginsProvider.class).in(Scopes.SINGLETON);
+        configBinder(binder).bindConfig(ServerPluginsProviderConfig.class);
 
         binder.bind(CatalogManager.class).in(Scopes.SINGLETON);
 
         // block encodings
         jsonBinder(binder).addSerializerBinding(Block.class).to(BlockJsonSerde.Serializer.class);
         jsonBinder(binder).addDeserializerBinding(Block.class).to(BlockJsonSerde.Deserializer.class);
-
-        // range encoding
-        jsonBinder(binder).addSerializerBinding(Range.class).to(RangeJsonSerde.Serializer.class);
-        jsonBinder(binder).addDeserializerBinding(Range.class).to(RangeJsonSerde.Deserializer.class);
 
         // thread visualizer
         jaxrsBinder(binder).bind(ThreadResource.class);

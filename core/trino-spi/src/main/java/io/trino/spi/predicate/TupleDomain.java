@@ -159,8 +159,12 @@ public final class TupleDomain<T>
                         })));
     }
 
+    /*
+     * This method is for JSON serialization only. Do not use.
+     * It's marked as @Deprecated to help avoid usage, and not because we plan to remove it.
+     */
+    @Deprecated
     @JsonCreator
-    // Available for Jackson deserialization only!
     public static <T> TupleDomain<T> fromColumnDomains(@JsonProperty("columnDomains") Optional<List<ColumnDomain<T>>> columnDomains)
     {
         if (columnDomains.isEmpty()) {
@@ -170,8 +174,12 @@ public final class TupleDomain<T>
                 .collect(toLinkedMap(ColumnDomain::getColumn, ColumnDomain::getDomain)));
     }
 
+    /*
+     * This method is for JSON serialization only. Do not use.
+     * It's marked as @Deprecated to help avoid usage, and not because we plan to remove it.
+     */
+    @Deprecated
     @JsonProperty
-    // Available for Jackson serialization only!
     public Optional<List<ColumnDomain<T>>> getColumnDomains()
     {
         return domains.map(map -> map.entrySet().stream()
@@ -248,7 +256,11 @@ public final class TupleDomain<T>
                 intersected.put(entry.getKey(), entry.getValue());
             }
             else {
-                intersected.put(entry.getKey(), intersectionDomain.intersect(entry.getValue()));
+                Domain intersect = intersectionDomain.intersect(entry.getValue());
+                if (intersect.isNone()) {
+                    return TupleDomain.none();
+                }
+                intersected.put(entry.getKey(), intersect);
             }
         }
         return withColumnDomains(intersected);
@@ -311,6 +323,9 @@ public final class TupleDomain<T>
         Iterator<TupleDomain<T>> domains = tupleDomains.iterator();
         while (domains.hasNext()) {
             TupleDomain<T> domain = domains.next();
+            if (domain.isAll()) {
+                return TupleDomain.all();
+            }
             if (!domain.isNone()) {
                 found = true;
                 commonColumns.addAll(domain.getDomains().get().keySet());

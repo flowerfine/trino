@@ -128,9 +128,9 @@ public class BridgingHiveMetastore
     }
 
     @Override
-    public void updateTableStatistics(HiveIdentity identity, String databaseName, String tableName, Function<PartitionStatistics, PartitionStatistics> update, AcidTransaction transaction)
+    public void updateTableStatistics(HiveIdentity identity, String databaseName, String tableName, AcidTransaction transaction, Function<PartitionStatistics, PartitionStatistics> update)
     {
-        delegate.updateTableStatistics(identity, databaseName, tableName, update, transaction);
+        delegate.updateTableStatistics(identity, databaseName, tableName, transaction, update);
     }
 
     @Override
@@ -241,7 +241,7 @@ public class BridgingHiveMetastore
         Map<String, String> parameters = table.getParameters().entrySet().stream()
                 .filter(entry -> !entry.getKey().equals(TABLE_COMMENT))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        comment.ifPresent(value -> parameters.put(TABLE_COMMENT, comment.get()));
+        comment.ifPresent(value -> parameters.put(TABLE_COMMENT, value));
 
         table.setParameters(parameters);
         alterTable(identity, databaseName, tableName, table);
@@ -269,7 +269,7 @@ public class BridgingHiveMetastore
     public void commentColumn(HiveIdentity identity, String databaseName, String tableName, String columnName, Optional<String> comment)
     {
         Optional<org.apache.hadoop.hive.metastore.api.Table> source = delegate.getTable(identity, databaseName, tableName);
-        if (!source.isPresent()) {
+        if (source.isEmpty()) {
             throw new TableNotFoundException(new SchemaTableName(databaseName, tableName));
         }
         org.apache.hadoop.hive.metastore.api.Table table = source.get();

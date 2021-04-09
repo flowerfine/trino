@@ -69,10 +69,15 @@ import io.trino.spi.connector.ConnectorTableLayoutHandle;
 import io.trino.spi.connector.ConnectorTableLayoutResult;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.ConnectorTableProperties;
+import io.trino.spi.connector.ConnectorTableSchema;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.ConnectorViewDefinition;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.ConstraintApplicationResult;
+import io.trino.spi.connector.JoinApplicationResult;
+import io.trino.spi.connector.JoinCondition;
+import io.trino.spi.connector.JoinStatistics;
+import io.trino.spi.connector.JoinType;
 import io.trino.spi.connector.LimitApplicationResult;
 import io.trino.spi.connector.MaterializedViewFreshness;
 import io.trino.spi.connector.ProjectionApplicationResult;
@@ -378,7 +383,7 @@ public final class MetadataManager
     public Optional<SystemTable> getSystemTable(Session session, QualifiedObjectName tableName)
     {
         requireNonNull(session, "session is null");
-        requireNonNull(tableName, "table is null");
+        requireNonNull(tableName, "tableName is null");
 
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, tableName.getCatalogName());
         if (catalog.isPresent()) {
@@ -502,6 +507,16 @@ public final class MetadataManager
         }
 
         return metadata.getInfo(handle.getConnectorHandle());
+    }
+
+    @Override
+    public TableSchema getTableSchema(Session session, TableHandle tableHandle)
+    {
+        CatalogName catalogName = tableHandle.getCatalogName();
+        ConnectorMetadata metadata = getMetadata(session, catalogName);
+        ConnectorTableSchema tableSchema = metadata.getTableSchema(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle());
+
+        return new TableSchema(catalogName, tableSchema);
     }
 
     @Override
@@ -902,15 +917,23 @@ public final class MetadataManager
                 .map(TableHandle::getConnectorHandle)
                 .collect(toImmutableList());
         return metadata.finishRefreshMaterializedView(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle(), insertHandle.getConnectorHandle(),
-            fragments, computedStatistics, sourceConnectorHandles);
+                fragments, computedStatistics, sourceConnectorHandles);
     }
 
     @Override
-    public ColumnHandle getUpdateRowIdColumnHandle(Session session, TableHandle tableHandle)
+    public ColumnHandle getDeleteRowIdColumnHandle(Session session, TableHandle tableHandle)
     {
         CatalogName catalogName = tableHandle.getCatalogName();
         ConnectorMetadata metadata = getMetadata(session, catalogName);
-        return metadata.getUpdateRowIdColumnHandle(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle());
+        return metadata.getDeleteRowIdColumnHandle(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle());
+    }
+
+    @Override
+    public ColumnHandle getUpdateRowIdColumnHandle(Session session, TableHandle tableHandle, List<ColumnHandle> updatedColumns)
+    {
+        CatalogName catalogName = tableHandle.getCatalogName();
+        ConnectorMetadata metadata = getMetadata(session, catalogName);
+        return metadata.getUpdateRowIdColumnHandle(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle(), updatedColumns);
     }
 
     @Override
@@ -975,6 +998,23 @@ public final class MetadataManager
         CatalogName catalogName = tableHandle.getCatalogName();
         ConnectorMetadata metadata = getMetadata(session, catalogName);
         metadata.finishDelete(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle(), fragments);
+    }
+
+    @Override
+    public TableHandle beginUpdate(Session session, TableHandle tableHandle, List<ColumnHandle> updatedColumns)
+    {
+        CatalogName catalogName = tableHandle.getCatalogName();
+        ConnectorMetadata metadata = getMetadataForWrite(session, catalogName);
+        ConnectorTableHandle newHandle = metadata.beginUpdate(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle(), updatedColumns);
+        return new TableHandle(tableHandle.getCatalogName(), newHandle, tableHandle.getTransaction(), tableHandle.getLayout());
+    }
+
+    @Override
+    public void finishUpdate(Session session, TableHandle tableHandle, Collection<Slice> fragments)
+    {
+        CatalogName catalogName = tableHandle.getCatalogName();
+        ConnectorMetadata metadata = getMetadata(session, catalogName);
+        metadata.finishUpdate(session.toConnectorSession(catalogName), tableHandle.getConnectorHandle(), fragments);
     }
 
     @Override
@@ -1299,6 +1339,67 @@ public final class MetadataManager
     }
 
     @Override
+    public Optional<JoinApplicationResult<TableHandle>> applyJoin(
+            Session session,
+            JoinType joinType,
+            TableHandle left,
+            TableHandle right,
+            List<JoinCondition> joinConditions,
+            Map<String, ColumnHandle> leftAssignments,
+            Map<String, ColumnHandle> rightAssignments,
+            JoinStatistics statistics)
+    {
+        if (!right.getCatalogName().equals(left.getCatalogName())) {
+            // Exact comparison is fine as catalog name here is passed from CatalogMetadata and is normalized to lowercase
+            return Optional.empty();
+        }
+        CatalogName catalogName = left.getCatalogName();
+
+        ConnectorTransactionHandle transaction = left.getTransaction();
+        ConnectorMetadata metadata = getMetadata(session, catalogName);
+        ConnectorSession connectorSession = session.toConnectorSession(catalogName);
+
+        Optional<JoinApplicationResult<ConnectorTableHandle>> connectorResult =
+                metadata.applyJoin(
+                        connectorSession,
+                        joinType,
+                        left.getConnectorHandle(),
+                        right.getConnectorHandle(),
+                        joinConditions,
+                        leftAssignments,
+                        rightAssignments,
+                        statistics);
+
+        return connectorResult.map(result -> {
+            Set<ColumnHandle> leftColumnHandles = ImmutableSet.copyOf(getColumnHandles(session, left).values());
+            Set<ColumnHandle> rightColumnHandles = ImmutableSet.copyOf(getColumnHandles(session, right).values());
+            Set<ColumnHandle> leftColumnHandlesMappingKeys = result.getLeftColumnHandles().keySet();
+            Set<ColumnHandle> rightColumnHandlesMappingKeys = result.getRightColumnHandles().keySet();
+
+            if (leftColumnHandlesMappingKeys.size() != leftColumnHandles.size()
+                    || rightColumnHandlesMappingKeys.size() != rightColumnHandles.size()
+                    || !leftColumnHandlesMappingKeys.containsAll(leftColumnHandles)
+                    || !rightColumnHandlesMappingKeys.containsAll(rightColumnHandles)) {
+                throw new IllegalStateException(format(
+                        "Column handle mappings do not match old column handles: left=%s; right=%s; newLeft=%s, newRight=%s",
+                        leftColumnHandles,
+                        rightColumnHandles,
+                        leftColumnHandlesMappingKeys,
+                        rightColumnHandlesMappingKeys));
+            }
+
+            return new JoinApplicationResult<>(
+                    new TableHandle(
+                            catalogName,
+                            result.getTableHandle(),
+                            transaction,
+                            Optional.empty()),
+                    result.getLeftColumnHandles(),
+                    result.getRightColumnHandles());
+        });
+    }
+
+    @Override
     public Optional<TopNApplicationResult<TableHandle>> applyTopN(
             Session session,
             TableHandle table,
@@ -1433,7 +1534,7 @@ public final class MetadataManager
     public Set<RoleGrant> listAllRoleGrants(Session session, String catalog, Optional<Set<String>> roles, Optional<Set<String>> grantees, OptionalLong limit)
     {
         Optional<CatalogMetadata> catalogMetadata = getOptionalCatalogMetadata(session, catalog);
-        if (!catalogMetadata.isPresent()) {
+        if (catalogMetadata.isEmpty()) {
             return ImmutableSet.of();
         }
         CatalogName catalogName = catalogMetadata.get().getCatalogName();
@@ -1914,6 +2015,7 @@ public final class MetadataManager
         return new FunctionMetadata(
                 functionMetadata.getFunctionId(),
                 resolvedFunction.getSignature().toSignature(),
+                functionMetadata.getActualName(),
                 functionMetadata.isNullable(),
                 argumentDefinitions,
                 functionMetadata.isHidden(),

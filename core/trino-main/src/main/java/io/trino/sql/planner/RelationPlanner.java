@@ -202,8 +202,8 @@ class RelationPlanner
             }
 
             List<Symbol> outputSymbols = outputSymbolsBuilder.build();
-            boolean isDeleteTarget = analysis.isDeleteTarget(node);
-            PlanNode root = TableScanNode.newInstance(idAllocator.getNextId(), handle, outputSymbols, columns.build(), isDeleteTarget);
+            boolean updateTarget = analysis.isUpdateTarget(node);
+            PlanNode root = TableScanNode.newInstance(idAllocator.getNextId(), handle, outputSymbols, columns.build(), updateTarget, Optional.empty());
 
             plan = new RelationPlan(root, scope, outputSymbols, outerContext);
         }
@@ -440,6 +440,7 @@ class RelationPlanner
                 equiClauses.build(),
                 leftPlanBuilder.getRoot().getOutputSymbols(),
                 rightPlanBuilder.getRoot().getOutputSymbols(),
+                false,
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
@@ -481,6 +482,7 @@ class RelationPlanner
                     equiClauses.build(),
                     leftPlanBuilder.getRoot().getOutputSymbols(),
                     rightPlanBuilder.getRoot().getOutputSymbols(),
+                    false,
                     Optional.of(rewrittenFilterCondition),
                     Optional.empty(),
                     Optional.empty(),
@@ -589,6 +591,7 @@ class RelationPlanner
                 clauses.build(),
                 leftCoercion.getOutputSymbols(),
                 rightCoercion.getOutputSymbols(),
+                false,
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),

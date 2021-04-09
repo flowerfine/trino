@@ -97,6 +97,7 @@ import static io.trino.plugin.hive.BackgroundHiveSplitLoader.hasAttemptId;
 import static io.trino.plugin.hive.HiveColumnHandle.createBaseColumn;
 import static io.trino.plugin.hive.HiveColumnHandle.pathColumnHandle;
 import static io.trino.plugin.hive.HiveErrorCode.HIVE_INVALID_BUCKET_FILES;
+import static io.trino.plugin.hive.HiveErrorCode.HIVE_UNKNOWN_ERROR;
 import static io.trino.plugin.hive.HiveSessionProperties.getMaxInitialSplitSize;
 import static io.trino.plugin.hive.HiveStorageFormat.AVRO;
 import static io.trino.plugin.hive.HiveStorageFormat.CSV;
@@ -119,13 +120,13 @@ import static io.trino.testing.assertions.TrinoExceptionAssert.assertTrinoExcept
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.Executors.newCachedThreadPool;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.FILE_INPUT_FORMAT;
 import static org.apache.hadoop.hive.serde.serdeConstants.SERIALIZATION_LIB;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
-import static org.testng.Assert.fail;
 
 public class TestBackgroundHiveSplitLoader
 {
@@ -231,18 +232,15 @@ public class TestBackgroundHiveSplitLoader
                 table,
                 Optional.empty());
 
-        hiveSplitSource = hiveSplitSource(backgroundHiveSplitLoader);
-        backgroundHiveSplitLoader.start(hiveSplitSource);
-
-        try {
-            drainSplits(hiveSplitSource);
-            fail("Expected split generation to call isSplittable and fail");
-        }
-        catch (TrinoException e) {
-            Throwable cause = Throwables.getRootCause(e);
-            assertTrue(cause instanceof IllegalStateException);
-            assertEquals(cause.getMessage(), "isSplittable called");
-        }
+        HiveSplitSource finalHiveSplitSource = hiveSplitSource(backgroundHiveSplitLoader);
+        backgroundHiveSplitLoader.start(finalHiveSplitSource);
+        assertTrinoExceptionThrownBy(() -> drainSplits(finalHiveSplitSource))
+                .hasErrorCode(HIVE_UNKNOWN_ERROR)
+                .isInstanceOfSatisfying(TrinoException.class, e -> {
+                    Throwable cause = Throwables.getRootCause(e);
+                    assertTrue(cause instanceof IllegalStateException);
+                    assertEquals(cause.getMessage(), "isSplittable called");
+                });
     }
 
     public static final class TestSplittableFailureInputFormat
@@ -410,7 +408,7 @@ public class TestBackgroundHiveSplitLoader
                         return TupleDomain.all();
                     }
                 },
-                Duration.valueOf("1s"));
+                new Duration(1, SECONDS));
         HiveSplitSource hiveSplitSource = hiveSplitSource(backgroundHiveSplitLoader);
         backgroundHiveSplitLoader.start(hiveSplitSource);
 
@@ -531,7 +529,7 @@ public class TestBackgroundHiveSplitLoader
                 },
                 TupleDomain.all(),
                 DynamicFilter.EMPTY,
-                Duration.valueOf("0s"),
+                new Duration(0, SECONDS),
                 TYPE_MANAGER,
                 createBucketSplitInfo(Optional.empty(), Optional.empty()),
                 SESSION,
@@ -715,7 +713,8 @@ public class TestBackgroundHiveSplitLoader
         backgroundHiveSplitLoader.start(hiveSplitSource);
         assertThatThrownBy(() -> drain(hiveSplitSource))
                 .isInstanceOfSatisfying(TrinoException.class, e -> assertEquals(NOT_SUPPORTED.toErrorCode(), e.getErrorCode()))
-                .hasMessage("Hive transactional tables are supported with Hive 3.0 and only after a major compaction has been run");
+                .hasMessage("Hive transactional tables are supported since Hive 3.0. " +
+                        "If you have upgraded from an older version of Hive, make sure a major compaction has been run at least once after the upgrade.");
 
         deleteRecursively(tablePath, ALLOW_INSECURE);
     }
@@ -925,7 +924,7 @@ public class TestBackgroundHiveSplitLoader
                 hdfsEnvironment,
                 compactEffectivePredicate,
                 DynamicFilter.EMPTY,
-                Duration.valueOf("0s"),
+                new Duration(0, SECONDS),
                 hiveBucketFilter,
                 table,
                 bucketHandle,
@@ -987,7 +986,7 @@ public class TestBackgroundHiveSplitLoader
                 hivePartitionMetadatas,
                 TupleDomain.none(),
                 DynamicFilter.EMPTY,
-                Duration.valueOf("0s"),
+                new Duration(0, SECONDS),
                 TYPE_MANAGER,
                 Optional.empty(),
                 connectorSession,
@@ -1013,7 +1012,7 @@ public class TestBackgroundHiveSplitLoader
                 createPartitionMetadataWithOfflinePartitions(),
                 TupleDomain.all(),
                 DynamicFilter.EMPTY,
-                Duration.valueOf("0s"),
+                new Duration(0, SECONDS),
                 TYPE_MANAGER,
                 createBucketSplitInfo(Optional.empty(), Optional.empty()),
                 connectorSession,

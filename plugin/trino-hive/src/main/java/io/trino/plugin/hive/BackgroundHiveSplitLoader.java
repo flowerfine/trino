@@ -90,6 +90,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.collect.Iterables.getOnlyElement;
+import static com.google.common.collect.Maps.fromProperties;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static io.airlift.concurrent.MoreFutures.addExceptionCallback;
 import static io.airlift.concurrent.MoreFutures.toListenableFuture;
@@ -204,7 +205,7 @@ public class BackgroundHiveSplitLoader
             Optional<ValidWriteIdList> validWriteIds)
     {
         this.table = table;
-        this.transaction = requireNonNull(transaction, "tranaction is null");
+        this.transaction = requireNonNull(transaction, "transaction is null");
         this.compactEffectivePredicate = compactEffectivePredicate;
         this.dynamicFilter = dynamicFilter;
         this.dynamicFilteringProbeBlockingTimeoutMillis = dynamicFilteringProbeBlockingTimeout.toMillis();
@@ -221,7 +222,7 @@ public class BackgroundHiveSplitLoader
         this.optimizeSymlinkListing = optimizeSymlinkListing;
         this.executor = executor;
         this.partitions = new ConcurrentLazyQueue<>(partitions);
-        this.hdfsContext = new HdfsContext(session, table.getDatabaseName(), table.getTableName());
+        this.hdfsContext = new HdfsContext(session);
         this.validWriteIds = requireNonNull(validWriteIds, "validWriteIds is null");
     }
 
@@ -472,6 +473,8 @@ public class BackgroundHiveSplitLoader
 
             JobConf jobConf = toJobConf(configuration);
             FileInputFormat.setInputPaths(jobConf, path);
+            // Pass SerDes and Table parameters into input format configuration
+            fromProperties(schema).forEach(jobConf::set);
             InputSplit[] splits = hdfsEnvironment.doAs(hdfsContext.getIdentity().getUser(), () -> inputFormat.getSplits(jobConf, 0));
 
             return addSplitsToSource(splits, splitFactory);
@@ -495,7 +498,8 @@ public class BackgroundHiveSplitLoader
                         : (directory.getCurrentDirectories().size() > 0 ? directory.getCurrentDirectories().get(0).getPath() : null);
 
                 if (baseOrDeltaPath != null && AcidUtils.OrcAcidVersion.getAcidVersionFromMetaFile(baseOrDeltaPath, fs) < 2) {
-                    throw new TrinoException(NOT_SUPPORTED, "Hive transactional tables are supported with Hive 3.0 and only after a major compaction has been run");
+                    throw new TrinoException(NOT_SUPPORTED, "Hive transactional tables are supported since Hive 3.0. " +
+                            "If you have upgraded from an older version of Hive, make sure a major compaction has been run at least once after the upgrade.");
                 }
             }
 
@@ -938,7 +942,7 @@ public class BackgroundHiveSplitLoader
         public static Optional<BucketSplitInfo> createBucketSplitInfo(Optional<HiveBucketHandle> bucketHandle, Optional<HiveBucketFilter> bucketFilter)
         {
             requireNonNull(bucketHandle, "bucketHandle is null");
-            requireNonNull(bucketFilter, "buckets is null");
+            requireNonNull(bucketFilter, "bucketFilter is null");
 
             if (bucketHandle.isEmpty()) {
                 checkArgument(bucketFilter.isEmpty(), "bucketHandle must be present if bucketFilter is present");

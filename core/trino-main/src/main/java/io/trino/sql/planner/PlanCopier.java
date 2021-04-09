@@ -120,7 +120,7 @@ public final class PlanCopier
         @Override
         public PlanNode visitTableScan(TableScanNode node, RewriteContext<Void> context)
         {
-            return new TableScanNode(idAllocator.getNextId(), node.getTable(), node.getOutputSymbols(), node.getAssignments(), node.getEnforcedConstraint(), node.isForDelete());
+            return new TableScanNode(idAllocator.getNextId(), node.getTable(), node.getOutputSymbols(), node.getAssignments(), node.getEnforcedConstraint(), node.isUpdateTarget(), node.getUseConnectorNodePartitioning());
         }
 
         @Override
@@ -140,6 +140,7 @@ public final class PlanCopier
                     node.getCriteria(),
                     node.getLeftOutputSymbols(),
                     node.getRightOutputSymbols(),
+                    node.isMaySkipOutputDuplicates(),
                     node.getFilter(),
                     node.getLeftHashSymbol(),
                     node.getRightHashSymbol(),

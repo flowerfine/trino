@@ -15,6 +15,7 @@ package io.trino.execution;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import io.trino.Session;
+import io.trino.execution.warnings.WarningCollector;
 import io.trino.metadata.Metadata;
 import io.trino.metadata.QualifiedObjectName;
 import io.trino.security.AccessControl;
@@ -47,13 +48,14 @@ public class DropMaterializedViewTask
             Metadata metadata,
             AccessControl accessControl,
             QueryStateMachine stateMachine,
-            List<Expression> parameters)
+            List<Expression> parameters,
+            WarningCollector warningCollector)
     {
         Session session = stateMachine.getSession();
         QualifiedObjectName name = createQualifiedObjectName(session, statement, statement.getName());
 
         Optional<ConnectorMaterializedViewDefinition> view = metadata.getMaterializedView(session, name);
-        if (!view.isPresent()) {
+        if (view.isEmpty()) {
             if (!statement.isExists()) {
                 throw semanticException(TABLE_NOT_FOUND, statement, "View '%s' does not exist", name);
             }
